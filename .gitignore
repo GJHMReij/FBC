@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.png
+.claude/
+
+# Real (non-dummy) cohort data must never be committed
+CohortML.csv
+CohortML_*.csv
+!CohortML_DUMMY.csv
