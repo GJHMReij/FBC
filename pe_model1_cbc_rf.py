@@ -370,7 +370,7 @@ def sensitivity_threshold_metrics(y_true, p_pred, target_sensitivity):
     return result
 
 
-def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.8):
+def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.8, n_jobs=-1):
     """Run the full model-building procedure (feature selection -> scaling ->
     RF fit) on one dataset, with fixed rf_params. Used both for the apparent
     (full-data) model and for each bootstrap resample, so feature selection
@@ -382,7 +382,7 @@ def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.
     X_scaled = scaler.fit_transform(X[selected])
 
     model = RandomForestClassifier(
-        random_state=42, n_jobs=-1, class_weight="balanced", oob_score=False, **rf_params
+        random_state=42, n_jobs=n_jobs, class_weight="balanced", oob_score=False, **rf_params
     )
     model.fit(X_scaled, y)
     return model, scaler, selected
@@ -416,7 +416,17 @@ def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_stat
         X_boot = X.iloc[idx]
         y_boot = y.iloc[idx]
 
-        model, scaler, selected = fit_pipeline(X_boot, y_boot, model1_features, rf_params)
+        # n_jobs=1 (not -1) here: this fit runs inside a 500-iteration loop,
+        # so spinning up a fresh multi-process worker pool per resample --
+        # instead of once, as GridSearchCV above does -- risks the kind of
+        # joblib/multiprocessing deadlock seen on some Windows/AV-monitored
+        # environments (confirmed on MyDRE: hung inside joblib's Parallel
+        # waiting on RandomForestClassifier workers). A single resample's RF
+        # fit is small enough that single-threaded is an acceptable
+        # slowdown in exchange for not hanging indefinitely.
+        model, scaler, selected = fit_pipeline(
+            X_boot, y_boot, model1_features, rf_params, n_jobs=1
+        )
 
         boot_pred = model.predict_proba(scaler.transform(X_boot[selected]))[:, 1]
         boot_auc = roc_auc_score(y_boot, boot_pred)
