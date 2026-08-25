@@ -194,6 +194,10 @@ def main():
 
     print(f"Loading {input_csv} ...")
     df = pd.read_csv(input_csv, low_memory=False)
+    # Defensive: strip stray whitespace/control characters from column names
+    # (e.g. a trailing \r on the last column of a Windows-exported CSV) that
+    # would otherwise silently break exact-name lookups like df["Geslacht"].
+    df.columns = df.columns.str.strip()
     print(f"Shape: {df.shape}")
 
     dictionary_df = read_dictionary()
