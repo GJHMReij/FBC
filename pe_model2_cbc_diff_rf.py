@@ -52,13 +52,22 @@ CBC_DIFF_CHANNELS = CBC_CHANNELS | {"DIFF/WDF"}
 
 # Auxiliary variables the analysis plan asks the imputation model to
 # include, beyond the DIFF parameters themselves and the Model 1 covariates
-# (age/sex/creatinine, already in the feature matrix). Quantitative D-dimer
-# level isn't in the dummy dataset (Model 3 concern) and calendar year needs
-# a real, parseable order date -- both are picked up automatically here if
-# and when they're present and usable, so this degrades gracefully on the
-# dummy data and "just works" on the real MyDRE cohort.
+# (age/sex/creatinine, already in the feature matrix). Calendar year needs a
+# real, parseable order date and is picked up automatically here if and when
+# it's present and usable, so this degrades gracefully on the dummy data
+# (its order-date column is a scrubbed placeholder) and "just works" on the
+# real MyDRE cohort.
 HOSPITAL_COL = "Ziekenhuislocatie"
 ORDER_DATE_COL = "OnderzoeksDatum"
+
+# D-dimer level/assay: the analysis plan requires these as imputation-model
+# predictors for the DIFF panel regardless of which model is being built --
+# even Model 1/2, which don't use D-dimer as an actual predictor. Defined
+# here (not in the Model 3 script) so Model 2's imputation model includes
+# them too; Model 3 imports these same constants rather than redefining them.
+D_DIMER_VALUE_COL = "D_dimeer_val"
+D_DIMER_ASSAY_COL = "D_dimer_assay"
+D_DIMER_ASSAY_MAP = {"Siemens Innovance": 1.0, "VUmc Tinaquant": 0.0}
 
 
 def get_cbc_diff_features(feature_channel_map):
@@ -74,15 +83,18 @@ def get_cbc_diff_features(feature_channel_map):
     return features
 
 
-def build_imputation_frame(df, y, model2_features):
-    """Assemble the matrix MICE imputes over: the Model 2 feature columns
-    (age/sex/creatinine/CBC/DIFF, some with missing DIFF values) plus
-    auxiliary variables that help predict the missingness but are not
-    themselves Model 2 predictors (hospital, outcome), added per the
-    analysis plan's imputation-model requirement. Auxiliary columns that
-    aren't usable in this particular input file are skipped with a warning
-    rather than failing, so the same code runs on both the dummy and the
-    real MyDRE cohort.
+def build_imputation_frame(df, y, model_features):
+    """Assemble the matrix MICE imputes over: the given model's feature
+    columns (age/sex/creatinine/CBC/DIFF[/D-dimer], some with missing DIFF
+    values) plus auxiliary variables that help predict the missingness but
+    aren't necessarily predictors of the model being built (hospital,
+    D-dimer level/assay, outcome), added per the analysis plan's
+    imputation-model requirement. Auxiliary columns that aren't usable in
+    this particular input file are skipped with a warning rather than
+    failing, so the same code runs on both the dummy and the real MyDRE
+    cohort. D-dimer level/assay are skipped here if they're already part of
+    model_features (Model 3 includes them as real predictors) to avoid
+    duplicate columns.
     """
     aux = pd.DataFrame(index=df.index)
 
@@ -103,9 +115,27 @@ def build_imputation_frame(df, y, model2_features):
     else:
         print(f"Imputation model: date column '{ORDER_DATE_COL}' not found, skipping calendar year")
 
+    if D_DIMER_VALUE_COL not in model_features:
+        if D_DIMER_VALUE_COL in df.columns and df[D_DIMER_VALUE_COL].notna().any():
+            aux[D_DIMER_VALUE_COL] = df[D_DIMER_VALUE_COL].astype(float)
+            print(f"Imputation model: including D-dimer level ({D_DIMER_VALUE_COL})")
+        else:
+            print(f"Imputation model: D-dimer level column '{D_DIMER_VALUE_COL}' not usable, skipping")
+
+    if "D_dimer_assay_enc" not in model_features:
+        if D_DIMER_ASSAY_COL in df.columns:
+            assay_enc = df[D_DIMER_ASSAY_COL].map(D_DIMER_ASSAY_MAP)
+            if assay_enc.notna().any():
+                aux["D_dimer_assay_enc"] = assay_enc
+                print(f"Imputation model: including D-dimer assay ({D_DIMER_ASSAY_COL})")
+            else:
+                print(f"Imputation model: D-dimer assay column '{D_DIMER_ASSAY_COL}' not usable, skipping")
+        else:
+            print(f"Imputation model: D-dimer assay column '{D_DIMER_ASSAY_COL}' not found, skipping")
+
     aux["outcome"] = y.astype(float)
 
-    imputation_frame = pd.concat([df[model2_features], aux], axis=1)
+    imputation_frame = pd.concat([df[model_features], aux], axis=1)
     return imputation_frame
 
 

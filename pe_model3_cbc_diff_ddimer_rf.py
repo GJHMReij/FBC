@@ -44,16 +44,13 @@ from pe_model1_cbc_rf import (
     sensitivity_threshold_metrics, build_feature_channel_map,
 )
 from pe_model2_cbc_diff_rf import (
-    N_IMPUTATIONS, build_imputation_frame, get_cbc_diff_features, run_mice,
-    rubin_pool,
+    D_DIMER_ASSAY_COL, D_DIMER_ASSAY_MAP, D_DIMER_VALUE_COL, N_IMPUTATIONS,
+    build_imputation_frame, get_cbc_diff_features, run_mice, rubin_pool,
 )
-
-D_DIMER_VALUE_COL = "D_dimeer_val"
-D_DIMER_ASSAY_COL = "D_dimer_assay"
-# Per proposal: "VU switched to the Innovance assay from Siemens ... already
-# in use at AMC" on 2020-03-03. Innovance=1 as the encoding reference; the
-# assay column itself already separates the two eras, no date needed.
-D_DIMER_ASSAY_MAP = {"Siemens Innovance": 1.0, "VUmc Tinaquant": 0.0}
+# D_DIMER_ASSAY_MAP: per proposal, "VU switched to the Innovance assay from
+# Siemens ... already in use at AMC" on 2020-03-03. Innovance=1 as the
+# encoding reference; the assay column itself already separates the two
+# eras, no date needed.
 
 
 def parse_args():
