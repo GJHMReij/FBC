@@ -20,6 +20,7 @@ MyDRE, point it at the real cohort CSV instead, without touching the code:
     .venv/bin/python pe_model1_cbc_rf.py --input-csv /path/to/real_cohort.csv
 """
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,15 @@ import pandas as pd
 
 pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", None)
+
+# Harmless, high-volume sklearn warning (nested-parallelism config
+# propagation notice), potentially emitted many times across the bootstrap
+# loop / GridSearchCV. Left unfiltered, printing this repeatedly over a slow
+# remote-desktop console (as on MyDRE) can make the process appear to hang
+# (blocked on stdout I/O rather than deadlocked). Filtered by originating
+# module rather than exact message text, which can vary across sklearn
+# versions.
+warnings.filterwarnings("ignore", category=UserWarning)
 
 from scipy.special import logit
 from scipy.stats import pearsonr
@@ -564,7 +574,7 @@ def main():
     }
     grid_search = GridSearchCV(
         base_model, param_grid, cv=5, scoring="roc_auc",
-        n_jobs=-1, refit=True, verbose=1,
+        n_jobs=-1, refit=True, verbose=0,
     )
     grid_search.fit(X_scaled, y)
     model = grid_search.best_estimator_
