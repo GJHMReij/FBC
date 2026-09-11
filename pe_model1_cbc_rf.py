@@ -502,6 +502,14 @@ def apply_outcome_correction(df, correction_path):
             raise ValueError(f"'{col}' not found in {correction_path} -- cannot apply outcome correction")
 
     correction_df = correction_df[[ORDER_ID_COL, OUTCOME_CORRECTION_COL]].drop_duplicates(subset=ORDER_ID_COL)
+    # Defensive: strip stray whitespace from the label values themselves
+    # (not just column names) -- a trailing space on "Ja" would silently
+    # fail the exact-match encoding downstream and read as "Nee".
+    correction_df[OUTCOME_CORRECTION_COL] = correction_df[OUTCOME_CORRECTION_COL].astype(str).str.strip()
+    print(f"Outcome correction: raw value counts in '{OUTCOME_CORRECTION_COL}' "
+          f"(repr() to reveal hidden characters):")
+    for value, count in correction_df[OUTCOME_CORRECTION_COL].value_counts(dropna=False).items():
+        print(f"  {value!r}: {count}")
 
     n_before = len(df)
     df = df.merge(correction_df, on=ORDER_ID_COL, how="left", suffixes=("", "_correction"))
