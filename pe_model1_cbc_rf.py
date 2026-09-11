@@ -511,6 +511,12 @@ def apply_outcome_correction(df, correction_path):
     for value, count in correction_df[OUTCOME_CORRECTION_COL].value_counts(dropna=False).items():
         print(f"  {value!r}: {count}")
 
+    # Normalize casing (e.g. real-world "ja"/"nee" vs. the "Ja"/"Nee" used
+    # elsewhere in this codebase) so the exact-match encoding downstream
+    # (df[OUTCOME_COL] == "Ja") and the NOT_ASSESSABLE_VALUE check below
+    # both work regardless of how the correction file capitalized things.
+    correction_df[OUTCOME_CORRECTION_COL] = correction_df[OUTCOME_CORRECTION_COL].str.capitalize()
+
     n_before = len(df)
     df = df.merge(correction_df, on=ORDER_ID_COL, how="left", suffixes=("", "_correction"))
 
