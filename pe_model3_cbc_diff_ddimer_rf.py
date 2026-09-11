@@ -42,8 +42,8 @@ from pe_model1_cbc_rf import (
     REPO_ROOT, SENSITIVITY_TARGETS, SEX_COL,
     apply_outcome_correction, bootstrap_optimism, calculate_correlation,
     calibration_slope_intercept, clean_data, fit_pipeline, pearson_filter,
-    read_dictionary, save_roc_data, sensitivity_threshold_metrics,
-    build_feature_channel_map,
+    read_dictionary, save_manuscript_data, save_roc_data,
+    sensitivity_threshold_metrics, build_feature_channel_map,
 )
 from pe_model2_cbc_diff_rf import (
     D_DIMER_ASSAY_COL, D_DIMER_ASSAY_MAP, D_DIMER_VALUE_COL, N_IMPUTATIONS,
@@ -178,6 +178,7 @@ def main():
     print(f"Best CV AUC (imputation 1 only): {grid_search.best_score_:.3f}")
 
     per_imputation_results = []
+    imputation1_importances = None
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
         model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params)
@@ -200,13 +201,18 @@ def main():
             apparent_metrics = sensitivity_threshold_metrics(y, apparent_pred, target)
             threshold_corrected[target] = {
                 key: apparent_metrics[key] - optimism[f"{target}_{key}"].mean()
-                for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency")
+                for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1")
             }
 
         print(f"  Corrected AUC={corrected_auc:.3f}, Brier={corrected_brier:.4f}, "
               f"slope={corrected_slope:.3f}, intercept={corrected_intercept:.3f}")
 
         importances = pd.Series(model.feature_importances_, index=selected)
+        if m == 0:
+            # Feature importance ranking (for the manuscript's Table 3) is
+            # taken from imputation 1 only, consistent with hyperparameter
+            # tuning also using only imputation 1.
+            imputation1_importances = importances
         d_dimer_rank = importances.rank(ascending=False)
         print(f"  D-dimer level importance rank: {int(d_dimer_rank.get(D_DIMER_VALUE_COL, -1))} "
               f"of {len(selected)} (value={importances.get(D_DIMER_VALUE_COL, float('nan')):.4f})")
@@ -235,7 +241,7 @@ def main():
     pooled_threshold_rows = []
     for target in SENSITIVITY_TARGETS:
         row = {"target_sensitivity": target}
-        for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency"):
+        for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"):
             estimates = [r["threshold"][target][key] for r in per_imputation_results]
             variances = [
                 r["optimism"][f"{target}_{key}"].var(ddof=1) for r in per_imputation_results
@@ -281,6 +287,13 @@ def main():
     fpr_pooled, tpr_pooled, _ = roc_curve(y, mean_pred)
     save_roc_data("Model 3 (+D-dimer)", fpr_pooled, tpr_pooled, pooled["auc"][0],
                   REPO_ROOT / "model3_roc_data.json")
+
+    save_manuscript_data(
+        "Model 3 (+D-dimer)", pooled["auc"][0], pooled["brier"][0],
+        pooled_threshold_df.loc[0.95].to_dict(),
+        list(imputation1_importances.sort_values(ascending=False).head(10).items()),
+        REPO_ROOT / "model3_manuscript_data.json",
+    )
 
 
 if __name__ == "__main__":

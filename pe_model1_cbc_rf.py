@@ -374,7 +374,7 @@ def pearson_filter(X, y, selected_columns, p_threshold=0.8, verbose=True):
     return [c for c in selected_columns if c not in weak]
 
 
-SENSITIVITY_TARGETS = [0.97, 0.98, 0.99]
+SENSITIVITY_TARGETS = [0.95, 0.97, 0.98, 0.99]
 
 
 def calibration_slope_intercept(y_true, p_pred):
@@ -397,17 +397,27 @@ def find_threshold_for_sensitivity(y_true, p_pred, target_sensitivity):
 
 
 def metrics_at_threshold(y_true, p_pred, threshold):
-    """PPV, NPV, specificity, sensitivity, and efficiency (TN+FN / N) at a
-    given probability threshold, per the analysis plan's performance
-    evaluation section."""
+    """PPV, NPV, specificity, sensitivity, efficiency (TN+FN / N), accuracy,
+    and F1 at a given probability threshold, per the analysis plan's
+    performance evaluation section plus the manuscript's Table 2 columns.
+    Note: accuracy and F1 are included because the manuscript table asks
+    for them, but both are of limited value here given the ~20% PE
+    prevalence (a trivial all-negative classifier already scores ~80%
+    accuracy) -- sensitivity/specificity/NPV/efficiency at a fixed clinical
+    sensitivity target remain the more meaningful metrics for this task.
+    """
     y_pred = (p_pred >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+    ppv = tp / (tp + fp) if (tp + fp) > 0 else np.nan
     return {
-        "sensitivity": tp / (tp + fn) if (tp + fn) > 0 else np.nan,
+        "sensitivity": sensitivity,
         "specificity": tn / (tn + fp) if (tn + fp) > 0 else np.nan,
-        "ppv": tp / (tp + fp) if (tp + fp) > 0 else np.nan,
+        "ppv": ppv,
         "npv": tn / (tn + fn) if (tn + fn) > 0 else np.nan,
         "efficiency": (tn + fn) / len(y_true),
+        "accuracy": (tp + tn) / len(y_true),
+        "f1": 2 * ppv * sensitivity / (ppv + sensitivity) if (ppv + sensitivity) > 0 else np.nan,
     }
 
 
@@ -432,6 +442,70 @@ def save_roc_data(label, fpr, tpr, auc, path):
             "fpr": [float(v) for v in fpr],
             "tpr": [float(v) for v in tpr],
         }, f)
+
+
+def save_manuscript_data(label, auc, brier, metrics_95, top_features, path):
+    """Save the specific numbers the manuscript's Table 2 (AUC, Sensitivity,
+    Specificity, Accuracy, F1, Brier Score at the 95% sensitivity threshold)
+    and Table 3 (top-10 feature importance ranking) need, as JSON --
+    fill_manuscript.py reads these to fill the actual manuscript .docx
+    without any manual copy-pasting from the console.
+    metrics_95: dict with sensitivity/specificity/accuracy/f1 (as returned
+    by metrics_at_threshold at the 0.95 target).
+    top_features: list of (name, importance) tuples, already sorted
+    descending, top 10.
+    """
+    with open(path, "w") as f:
+        json.dump({
+            "label": label,
+            "auc": float(auc),
+            "brier": float(brier),
+            "sensitivity_95": float(metrics_95["sensitivity"]),
+            "specificity_95": float(metrics_95["specificity"]),
+            "accuracy_95": float(metrics_95["accuracy"]),
+            "f1_95": float(metrics_95["f1"]),
+            "top_features": [(name, float(val)) for name, val in top_features],
+        }, f)
+
+
+def append_word_report(docx_path, title, lines, table_df=None, image_paths=None):
+    """Append a titled section (summary lines, an optional table, and
+    optional images) to a shared Word report -- creating the file if it
+    doesn't exist yet. Call once per model run; running Model 1 then 2 then
+    3 in sequence builds up one combined .docx with a section per model,
+    instead of needing to manually copy results out of the console.
+    """
+    from docx import Document
+    from docx.shared import Inches
+
+    if docx_path.exists():
+        doc = Document(str(docx_path))
+    else:
+        doc = Document()
+        doc.add_heading("PE Prediction Models - Results", level=0)
+
+    doc.add_heading(title, level=1)
+    for line in lines:
+        doc.add_paragraph(line)
+
+    if table_df is not None:
+        table_df = table_df.reset_index()
+        table = doc.add_table(rows=1, cols=len(table_df.columns))
+        table.style = "Light Grid Accent 1"
+        for i, col in enumerate(table_df.columns):
+            table.rows[0].cells[i].text = str(col)
+        for _, row in table_df.iterrows():
+            cells = table.add_row().cells
+            for i, val in enumerate(row):
+                cells[i].text = f"{val:.3f}" if isinstance(val, float) else str(val)
+
+    if image_paths:
+        for img_path in image_paths:
+            if Path(img_path).exists():
+                doc.add_picture(str(img_path), width=Inches(5.5))
+
+    doc.save(str(docx_path))
+    print(f"Word report updated: {docx_path}")
 
 
 def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.8, n_jobs=-1):
@@ -495,7 +569,7 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
         thr = find_threshold_for_sensitivity(y_boot, boot_pred, target)
         boot_metrics = metrics_at_threshold(y_boot, boot_pred, thr)
         orig_metrics = metrics_at_threshold(y, orig_pred, thr)
-        for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency"):
+        for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"):
             record[f"{target}_{key}"] = boot_metrics[key] - orig_metrics[key]
     return record
 
@@ -775,7 +849,7 @@ def main():
     ]
     apparent_df = pd.DataFrame(apparent_rows).set_index("target_sensitivity")
 
-    metric_keys = ["sensitivity", "specificity", "ppv", "npv", "efficiency"]
+    metric_keys = ["sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"]
     corrected_rows = []
     for target in SENSITIVITY_TARGETS:
         row = {"target_sensitivity": target}
@@ -813,6 +887,13 @@ def main():
     print(f"\nROC curve saved to: {roc_out_path}")
 
     save_roc_data("Model 1 (CBC)", fpr, tpr, corrected_auc, REPO_ROOT / "model1_roc_data.json")
+
+    save_manuscript_data(
+        "Model 1 (CBC)", corrected_auc, corrected_brier,
+        corrected_threshold_df.loc[0.95].to_dict(),
+        list(importances.sort_values(ascending=False).head(10).items()),
+        REPO_ROOT / "model1_manuscript_data.json",
+    )
 
     # Calibration plot: observed vs predicted probability, in deciles of
     # predicted risk, plus the bootstrap-corrected calibration line.

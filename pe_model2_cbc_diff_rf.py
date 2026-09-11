@@ -40,8 +40,8 @@ from pe_model1_cbc_rf import (
     apply_outcome_correction, build_discrete_channel_map, build_feature_channel_map,
     bootstrap_optimism, calculate_correlation, calibration_slope_intercept,
     clean_data, EXTRA_CHANNELS, CBC_CHANNELS, fit_pipeline,
-    metrics_at_threshold, pearson_filter, read_dictionary, save_roc_data,
-    sensitivity_threshold_metrics,
+    metrics_at_threshold, pearson_filter, read_dictionary, save_manuscript_data,
+    save_roc_data, sensitivity_threshold_metrics,
 )
 
 N_IMPUTATIONS = 10  # per analysis plan
@@ -288,9 +288,16 @@ def main():
     # correction (same machinery as Model 1). Collect the corrected point
     # estimate AND its within-imputation bootstrap variance for Rubin pooling.
     per_imputation_results = []
+    imputation1_importances = None
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
         model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params)
+        if m == 0:
+            # Feature importance ranking (for the manuscript's Table 3) is
+            # taken from imputation 1 only, consistent with hyperparameter
+            # tuning also using only imputation 1 -- there's no natural
+            # single "pooled" RF feature-importance across imputations.
+            imputation1_importances = pd.Series(model.feature_importances_, index=selected)
         apparent_pred = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
         apparent_auc = roc_auc_score(y, apparent_pred)
         apparent_slope, apparent_intercept = calibration_slope_intercept(y, apparent_pred)
@@ -310,7 +317,7 @@ def main():
             apparent_metrics = sensitivity_threshold_metrics(y, apparent_pred, target)
             threshold_corrected[target] = {
                 key: apparent_metrics[key] - optimism[f"{target}_{key}"].mean()
-                for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency")
+                for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1")
             }
 
         print(f"  Corrected AUC={corrected_auc:.3f}, Brier={corrected_brier:.4f}, "
@@ -341,7 +348,7 @@ def main():
     pooled_threshold_rows = []
     for target in SENSITIVITY_TARGETS:
         row = {"target_sensitivity": target}
-        for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency"):
+        for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"):
             estimates = [r["threshold"][target][key] for r in per_imputation_results]
             # Within-imputation variance for threshold metrics: reuse the
             # per-resample optimism spread as a proxy (same approach as
@@ -394,6 +401,13 @@ def main():
     fpr_pooled, tpr_pooled, _ = roc_curve(y, mean_pred)
     save_roc_data("Model 2 (+DIFF)", fpr_pooled, tpr_pooled, pooled["auc"][0],
                   REPO_ROOT / "model2_roc_data.json")
+
+    save_manuscript_data(
+        "Model 2 (+DIFF)", pooled["auc"][0], pooled["brier"][0],
+        pooled_threshold_df.loc[0.95].to_dict(),
+        list(imputation1_importances.sort_values(ascending=False).head(10).items()),
+        REPO_ROOT / "model2_manuscript_data.json",
+    )
 
 
 if __name__ == "__main__":
