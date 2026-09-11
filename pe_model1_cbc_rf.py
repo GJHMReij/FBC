@@ -20,6 +20,8 @@ MyDRE, point it at the real cohort CSV instead, without touching the code:
     .venv/bin/python pe_model1_cbc_rf.py --input-csv /path/to/real_cohort.csv
 """
 import argparse
+import threading
+import time
 import warnings
 from pathlib import Path
 
@@ -167,6 +169,35 @@ MECHANICAL_CHANNEL_MAPPING = {
     "CBC+DIFF+RET+PLT-F+WPC": ["CBC", "DIFF", "RET", "PLT-F", "WPC"],
     "FREE SELECT": ["CBC"],
 }
+
+
+class Heartbeat:
+    """Prints a periodic 'still running' message with elapsed time, for
+    long silent steps (e.g. GridSearchCV with verbose=0 -- kept quiet on
+    purpose since verbose=1's per-fit progress lines previously overwhelmed
+    MyDRE's slow remote console). Use as a context manager: 'with
+    Heartbeat("GridSearchCV"): grid_search.fit(...)'."""
+
+    def __init__(self, label, interval=60):
+        self.label = label
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        start = time.time()
+        while not self._stop.wait(self.interval):
+            elapsed = int(time.time() - start)
+            print(f"  ... {self.label} still running (elapsed: {elapsed // 60}m {elapsed % 60}s)",
+                  flush=True)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._stop.set()
+        self._thread.join()
 
 
 def read_dictionary():
@@ -657,7 +688,9 @@ def main():
         base_model, param_grid, cv=5, scoring="roc_auc",
         n_jobs=-1, refit=True, verbose=0,
     )
-    grid_search.fit(X_scaled, y)
+    print("\nFitting GridSearchCV (1620 fits, this can take 15-30+ min on the real cohort)...")
+    with Heartbeat("GridSearchCV"):
+        grid_search.fit(X_scaled, y)
     model = grid_search.best_estimator_
     rf_params = grid_search.best_params_
     print(f"\nBest params: {rf_params}")
