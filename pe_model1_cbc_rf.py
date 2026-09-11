@@ -41,6 +41,18 @@ pd.set_option("display.max_columns", None)
 # versions.
 warnings.filterwarnings("ignore", category=UserWarning)
 
+# Harmless, high-volume warning from BayesianRidge (the estimator
+# IterativeImputer/MICE uses internally in Model 2/3): a tiny floating-point
+# rounding error can make its predictive variance dip just below 0, so
+# np.sqrt() of it raises this RuntimeWarning. sklearn handles it internally;
+# it does not affect the imputed values. With sample_posterior=True across
+# 10 imputations x ~80 DIFF columns, this can print hundreds of times and
+# flood a slow remote console the same way the GridSearchCV verbose output
+# used to.
+warnings.filterwarnings(
+    "ignore", category=RuntimeWarning, module=r"sklearn\.linear_model\._bayes"
+)
+
 from scipy.special import logit
 from scipy.stats import pearsonr
 from joblib import Parallel, delayed
