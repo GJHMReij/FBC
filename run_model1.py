@@ -9,7 +9,7 @@ import sys
 FOLDER = r"C:\Users\Max.Reijers\Documents\FBC_pe_models"
 INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\models august\CohortMLgeslacht.csv"
 OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\models august\df_met_script8000.xlsx"
-N_BOOTSTRAP = "500"
+N_BOOTSTRAP = "50"  # TODO: set back to 500 for the final, definitive run
 
 
 def run_and_stream(cmd, cwd):
