@@ -20,6 +20,7 @@ MyDRE, point it at the real cohort CSV instead, without touching the code:
     .venv/bin/python pe_model1_cbc_rf.py --input-csv /path/to/real_cohort.csv
 """
 import argparse
+import json
 import threading
 import time
 import warnings
@@ -420,6 +421,19 @@ def sensitivity_threshold_metrics(y_true, p_pred, target_sensitivity):
     return result
 
 
+def save_roc_data(label, fpr, tpr, auc, path):
+    """Save one model's ROC curve (label, AUC, fpr/tpr arrays) as JSON, so
+    combine_roc_curves.py can later plot Model 1/2/3's curves together in a
+    single comparison figure without needing to rerun anything."""
+    with open(path, "w") as f:
+        json.dump({
+            "label": label,
+            "auc": float(auc),
+            "fpr": [float(v) for v in fpr],
+            "tpr": [float(v) for v in tpr],
+        }, f)
+
+
 def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.8, n_jobs=-1):
     """Run the full model-building procedure (feature selection -> scaling ->
     RF fit) on one dataset, with fixed rf_params. Used both for the apparent
@@ -797,6 +811,8 @@ def main():
     roc_out_path = REPO_ROOT / "model1_cbc_roc_curve.png"
     fig.savefig(roc_out_path, dpi=150)
     print(f"\nROC curve saved to: {roc_out_path}")
+
+    save_roc_data("Model 1 (CBC)", fpr, tpr, corrected_auc, REPO_ROOT / "model1_roc_data.json")
 
     # Calibration plot: observed vs predicted probability, in deciles of
     # predicted risk, plus the bootstrap-corrected calibration line.

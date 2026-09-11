@@ -42,7 +42,8 @@ from pe_model1_cbc_rf import (
     REPO_ROOT, SENSITIVITY_TARGETS, SEX_COL,
     apply_outcome_correction, bootstrap_optimism, calculate_correlation,
     calibration_slope_intercept, clean_data, fit_pipeline, pearson_filter,
-    read_dictionary, sensitivity_threshold_metrics, build_feature_channel_map,
+    read_dictionary, save_roc_data, sensitivity_threshold_metrics,
+    build_feature_channel_map,
 )
 from pe_model2_cbc_diff_rf import (
     D_DIMER_ASSAY_COL, D_DIMER_ASSAY_MAP, D_DIMER_VALUE_COL, N_IMPUTATIONS,
@@ -249,9 +250,11 @@ def main():
     print(pooled_threshold_df.round(3))
 
     fig, ax = plt.subplots(figsize=(6, 6))
+    all_preds = []
     for m, X_m in enumerate(imputed_datasets):
         model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params)
         pred_m = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
+        all_preds.append(pred_m)
         fpr, tpr, _ = roc_curve(y, pred_m)
         ax.plot(fpr, tpr, color="tab:blue", alpha=0.3,
                  label="Per-imputation (apparent)" if m == 0 else None)
@@ -269,6 +272,14 @@ def main():
     roc_out_path = REPO_ROOT / "model3_cbc_diff_ddimer_roc_curve.png"
     fig.savefig(roc_out_path, dpi=150)
     print(f"\nROC curve saved to: {roc_out_path}")
+
+    # Pooled (mean predicted probability across imputations) ROC curve, for
+    # combine_roc_curves.py -- a single representative curve per model,
+    # despite Model 3's underlying multiple-imputation structure.
+    mean_pred = np.mean(all_preds, axis=0)
+    fpr_pooled, tpr_pooled, _ = roc_curve(y, mean_pred)
+    save_roc_data("Model 3 (+D-dimer)", fpr_pooled, tpr_pooled, pooled["auc"][0],
+                  REPO_ROOT / "model3_roc_data.json")
 
 
 if __name__ == "__main__":

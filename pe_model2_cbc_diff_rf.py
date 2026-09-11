@@ -40,7 +40,7 @@ from pe_model1_cbc_rf import (
     apply_outcome_correction, build_discrete_channel_map, build_feature_channel_map,
     bootstrap_optimism, calculate_correlation, calibration_slope_intercept,
     clean_data, EXTRA_CHANNELS, CBC_CHANNELS, fit_pipeline,
-    metrics_at_threshold, pearson_filter, read_dictionary,
+    metrics_at_threshold, pearson_filter, read_dictionary, save_roc_data,
     sensitivity_threshold_metrics,
 )
 
@@ -362,9 +362,11 @@ def main():
     # transparent) to visualise between-imputation spread, with the pooled
     # AUC/calibration numbers in the title.
     fig, ax = plt.subplots(figsize=(6, 6))
+    all_preds = []
     for m, X_m in enumerate(imputed_datasets):
         model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params)
         pred_m = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
+        all_preds.append(pred_m)
         from sklearn.metrics import roc_curve
         fpr, tpr, _ = roc_curve(y, pred_m)
         ax.plot(fpr, tpr, color="tab:blue", alpha=0.3,
@@ -383,6 +385,14 @@ def main():
     roc_out_path = REPO_ROOT / "model2_cbc_diff_roc_curve.png"
     fig.savefig(roc_out_path, dpi=150)
     print(f"\nROC curve saved to: {roc_out_path}")
+
+    # Pooled (mean predicted probability across imputations) ROC curve, for
+    # combine_roc_curves.py -- a single representative curve per model,
+    # despite Model 2's underlying multiple-imputation structure.
+    mean_pred = np.mean(all_preds, axis=0)
+    fpr_pooled, tpr_pooled, _ = roc_curve(y, mean_pred)
+    save_roc_data("Model 2 (+DIFF)", fpr_pooled, tpr_pooled, pooled["auc"][0],
+                  REPO_ROOT / "model2_roc_data.json")
 
 
 if __name__ == "__main__":
