@@ -32,7 +32,12 @@ def run_and_stream(cmd, cwd):
 run_and_stream(["git", "pull"], cwd=FOLDER)
 
 run_and_stream([
-    sys.executable, "pe_model1_cbc_rf.py",
+    # -u: force the child Python process to run unbuffered, so its print()
+    # output is flushed immediately instead of sitting in an internal
+    # buffer (the default when stdout isn't a real terminal, as here) --
+    # without this, no output appears until the buffer fills or the
+    # process exits, even though it's running fine the whole time.
+    sys.executable, "-u", "pe_model1_cbc_rf.py",
     "--input-csv", INPUT_CSV,
     "--outcome-correction", OUTCOME_CORRECTION,
     "--n-bootstrap", N_BOOTSTRAP,
