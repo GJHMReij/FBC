@@ -5,6 +5,7 @@ paths/settings below as needed, save, and press Run in Spyder.
 """
 import subprocess
 import sys
+from datetime import datetime
 
 FOLDER = r"C:\Users\Max.Reijers\Documents\FBC_pe_models"
 INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\models august\CohortMLgeslacht.csv"
@@ -12,20 +13,36 @@ OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\models august\df_met_script8
 N_BOOTSTRAP = "50"  # TODO: set back to 500 for the final, definitive run
 N_IMPUTATIONS = "10"
 
+# Full transcript of this run, timestamped so earlier runs' logs aren't
+# overwritten -- lets you come back to exactly what a past run printed,
+# even after closing Spyder, on top of the JSON/PNG summary files the
+# model script itself always saves.
+LOG_PATH = f"{FOLDER}\\model2_run_log_{datetime.now():%Y%m%d_%H%M%S}.txt"
 
-def run_and_stream(cmd, cwd):
+
+def run_and_stream(cmd, cwd, log_path=None):
     """Run cmd and print its output line-by-line as it happens (via
     Python's own print, which Spyder's console does capture and display --
     unlike a plain subprocess.run(), whose inherited stdout can go
-    nowhere visible when Spyder itself has no attached console window)."""
-    print(f"$ {' '.join(cmd)}")
+    nowhere visible when Spyder itself has no attached console window).
+    If log_path is given, every line is also written there, so the full
+    transcript survives closing/clearing the console."""
+    header = f"$ {' '.join(cmd)}"
+    print(header)
+    log_file = open(log_path, "a", encoding="utf-8") if log_path else None
+    if log_file:
+        log_file.write(header + "\n")
     process = subprocess.Popen(
         cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )
     for line in process.stdout:
         print(line, end="")
+        if log_file:
+            log_file.write(line)
     process.wait()
+    if log_file:
+        log_file.close()
     if process.returncode != 0:
         raise RuntimeError(f"Command failed (exit code {process.returncode}): {' '.join(cmd)}")
 
@@ -43,4 +60,6 @@ run_and_stream([
     "--outcome-correction", OUTCOME_CORRECTION,
     "--n-bootstrap", N_BOOTSTRAP,
     "--n-imputations", N_IMPUTATIONS,
-], cwd=FOLDER)
+], cwd=FOLDER, log_path=LOG_PATH)
+
+print(f"\nFull run transcript saved to: {LOG_PATH}")
