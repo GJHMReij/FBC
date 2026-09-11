@@ -161,15 +161,19 @@ def main():
     base_model = RandomForestClassifier(
         random_state=42, n_jobs=-1, class_weight="balanced", oob_score=False
     )
+    # Trimmed during the review phase (fewer n_estimators/max_features
+    # values: 144 combos instead of 324) -- TODO: restore the full grid
+    # above for the final, definitive run.
     param_grid = {
-        "n_estimators": [200, 300, 500],
+        "n_estimators": [200, 500],
         "max_depth": [3, 5, 7, 9],
         "min_samples_leaf": [10, 25, 50],
         "min_samples_split": [20, 50, 100],
-        "max_features": ["sqrt", 0.2, 0.3],
+        "max_features": ["sqrt", 0.3],
     }
     grid_search = GridSearchCV(
-        base_model, param_grid, cv=5, scoring="roc_auc", n_jobs=-1, refit=True, verbose=0,
+        # cv=3 (was 5) during the review phase -- TODO: restore to cv=5 for the final run.
+        base_model, param_grid, cv=3, scoring="roc_auc", n_jobs=-1, refit=True, verbose=0,
     )
     with Heartbeat("GridSearchCV"):
         grid_search.fit(X0_scaled, y)
