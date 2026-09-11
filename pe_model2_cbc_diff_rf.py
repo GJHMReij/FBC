@@ -34,7 +34,7 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 import matplotlib.pyplot as plt
 
 from pe_model1_cbc_rf import (
-    AGE_COL, CREATININE_COL, DEFAULT_INPUT_CSV, NOT_ASSESSABLE_VALUE,
+    AGE_COL, CREATININE_COL, DEFAULT_INPUT_CSV, Heartbeat, NOT_ASSESSABLE_VALUE,
     ORDER_ID_COL, OUTCOME_COL, OUTCOME_CORRECTION_COL, REPO_ROOT,
     SENSITIVITY_TARGETS, SEX_COL,
     apply_outcome_correction, build_discrete_channel_map, build_feature_channel_map,
@@ -278,7 +278,8 @@ def main():
     grid_search = GridSearchCV(
         base_model, param_grid, cv=5, scoring="roc_auc", n_jobs=-1, refit=True, verbose=0,
     )
-    grid_search.fit(X0_scaled, y)
+    with Heartbeat("GridSearchCV"):
+        grid_search.fit(X0_scaled, y)
     rf_params = grid_search.best_params_
     print(f"Best params (fixed for all imputations): {rf_params}")
     print(f"Best CV AUC (imputation 1 only): {grid_search.best_score_:.3f}")
