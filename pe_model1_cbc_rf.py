@@ -71,6 +71,14 @@ SEX_COL = "Geslacht"
 CREATININE_COL = "creatinine"
 DISCRETE_COL = "Discrete"
 
+# The outcome column above (PE_according_to_all_sources) was not yet the
+# definitive, manually-reviewed PE label when Models 1-3 were first built.
+# --outcome-correction points at a separate file (Excel or CSV) with the
+# final reviewed label, joined onto the main cohort on ORDER_ID_COL.
+ORDER_ID_COL = "BeeldvormingsonderzoekOrderId"
+OUTCOME_CORRECTION_COL = "script8000"
+NOT_ASSESSABLE_VALUE = "Niet beoordeelbaar"
+
 PLACEHOLDER_STRINGS = ["----"]
 
 # From get_exclude_features.py (KD/Didier's manual review)
@@ -472,6 +480,54 @@ def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_stat
     return pd.DataFrame(records)
 
 
+def apply_outcome_correction(df, correction_path):
+    """Overwrite OUTCOME_COL with the definitive, manually-reviewed PE label
+    from a separate correction file (Excel or CSV), joined onto the main
+    cohort on ORDER_ID_COL. The original OUTCOME_COL used during initial
+    model development was not yet final; this correction file is now the
+    authoritative source. Rows marked NOT_ASSESSABLE_VALUE, or with no
+    match in the correction file, are dropped entirely -- both cases lack a
+    definitive PE label and can't be used for training/evaluation.
+    """
+    if correction_path.suffix.lower() in (".xlsx", ".xls"):
+        correction_df = pd.read_excel(correction_path)
+    else:
+        correction_df = pd.read_csv(correction_path, low_memory=False)
+    correction_df.columns = correction_df.columns.str.strip()
+
+    if ORDER_ID_COL not in df.columns:
+        raise ValueError(f"'{ORDER_ID_COL}' not found in the main dataset -- cannot apply outcome correction")
+    for col in (ORDER_ID_COL, OUTCOME_CORRECTION_COL):
+        if col not in correction_df.columns:
+            raise ValueError(f"'{col}' not found in {correction_path} -- cannot apply outcome correction")
+
+    correction_df = correction_df[[ORDER_ID_COL, OUTCOME_CORRECTION_COL]].drop_duplicates(subset=ORDER_ID_COL)
+
+    n_before = len(df)
+    df = df.merge(correction_df, on=ORDER_ID_COL, how="left", suffixes=("", "_correction"))
+
+    n_no_match = df[OUTCOME_CORRECTION_COL].isna().sum()
+    print(f"Outcome correction: {n_no_match} of {n_before} rows have no match in "
+          f"{correction_path.name} on '{ORDER_ID_COL}' -- dropping (no definitive label)")
+
+    n_not_assessable = (df[OUTCOME_CORRECTION_COL] == NOT_ASSESSABLE_VALUE).sum()
+    print(f"Outcome correction: dropping {n_not_assessable} rows marked "
+          f"'{NOT_ASSESSABLE_VALUE}' (no definitive PE status)")
+
+    keep_mask = df[OUTCOME_CORRECTION_COL].notna() & (df[OUTCOME_CORRECTION_COL] != NOT_ASSESSABLE_VALUE)
+    df = df.loc[keep_mask].reset_index(drop=True)
+
+    # Overwrite the original outcome column with the corrected, definitive
+    # labels so the rest of the pipeline (which reads OUTCOME_COL
+    # everywhere) picks this up transparently, no further code changes.
+    df[OUTCOME_COL] = df[OUTCOME_CORRECTION_COL]
+    df = df.drop(columns=[OUTCOME_CORRECTION_COL])
+
+    print(f"Outcome correction applied: {len(df)} rows remain with a definitive "
+          f"PE label (of {n_before} originally)")
+    return df
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -481,6 +537,13 @@ def parse_args():
     parser.add_argument(
         "--n-bootstrap", type=int, default=500,
         help="Number of bootstrap resamples for internal validation (default: 500, per analysis plan)",
+    )
+    parser.add_argument(
+        "--outcome-correction", type=Path, default=None,
+        help="Path to an Excel/CSV file with the definitive, manually-reviewed PE "
+             f"outcome (column '{OUTCOME_CORRECTION_COL}', joined on '{ORDER_ID_COL}'), "
+             f"overriding '{OUTCOME_COL}'. Rows marked '{NOT_ASSESSABLE_VALUE}' or "
+             "without a match are dropped.",
     )
     return parser.parse_args()
 
@@ -496,6 +559,10 @@ def main():
     # would otherwise silently break exact-name lookups like df["Geslacht"].
     df.columns = df.columns.str.strip()
     print(f"Shape: {df.shape}")
+
+    if args.outcome_correction is not None:
+        print(f"\nApplying outcome correction from {args.outcome_correction} ...")
+        df = apply_outcome_correction(df, args.outcome_correction)
 
     dictionary_df = read_dictionary()
     feature_channel_map = build_feature_channel_map(dictionary_df)

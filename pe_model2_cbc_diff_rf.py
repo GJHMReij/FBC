@@ -34,9 +34,10 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 import matplotlib.pyplot as plt
 
 from pe_model1_cbc_rf import (
-    AGE_COL, CREATININE_COL, DEFAULT_INPUT_CSV, OUTCOME_COL, REPO_ROOT,
+    AGE_COL, CREATININE_COL, DEFAULT_INPUT_CSV, NOT_ASSESSABLE_VALUE,
+    ORDER_ID_COL, OUTCOME_COL, OUTCOME_CORRECTION_COL, REPO_ROOT,
     SENSITIVITY_TARGETS, SEX_COL,
-    build_discrete_channel_map, build_feature_channel_map,
+    apply_outcome_correction, build_discrete_channel_map, build_feature_channel_map,
     bootstrap_optimism, calculate_correlation, calibration_slope_intercept,
     clean_data, EXTRA_CHANNELS, CBC_CHANNELS, fit_pipeline,
     metrics_at_threshold, pearson_filter, read_dictionary,
@@ -185,6 +186,13 @@ def parse_args():
         "--n-imputations", type=int, default=N_IMPUTATIONS,
         help=f"Number of MICE imputation sets (default: {N_IMPUTATIONS}, per analysis plan)",
     )
+    parser.add_argument(
+        "--outcome-correction", type=Path, default=None,
+        help="Path to an Excel/CSV file with the definitive, manually-reviewed PE "
+             f"outcome (column '{OUTCOME_CORRECTION_COL}', joined on '{ORDER_ID_COL}'), "
+             f"overriding '{OUTCOME_COL}'. Rows marked '{NOT_ASSESSABLE_VALUE}' or "
+             "without a match are dropped.",
+    )
     return parser.parse_args()
 
 
@@ -199,6 +207,10 @@ def main():
     # would otherwise silently break exact-name lookups like df["Geslacht"].
     df.columns = df.columns.str.strip()
     print(f"Shape: {df.shape}")
+
+    if args.outcome_correction is not None:
+        print(f"\nApplying outcome correction from {args.outcome_correction} ...")
+        df = apply_outcome_correction(df, args.outcome_correction)
 
     dictionary_df = read_dictionary()
     feature_channel_map = build_feature_channel_map(dictionary_df)
