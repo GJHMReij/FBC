@@ -11,11 +11,29 @@ INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\models august\CohortMLgeslacht.csv"
 OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\models august\df_met_script8000.xlsx"
 N_BOOTSTRAP = "500"
 
-subprocess.run(["git", "pull"], cwd=FOLDER, check=True)
 
-subprocess.run([
+def run_and_stream(cmd, cwd):
+    """Run cmd and print its output line-by-line as it happens (via
+    Python's own print, which Spyder's console does capture and display --
+    unlike a plain subprocess.run(), whose inherited stdout can go
+    nowhere visible when Spyder itself has no attached console window)."""
+    print(f"$ {' '.join(cmd)}")
+    process = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    for line in process.stdout:
+        print(line, end="")
+    process.wait()
+    if process.returncode != 0:
+        raise RuntimeError(f"Command failed (exit code {process.returncode}): {' '.join(cmd)}")
+
+
+run_and_stream(["git", "pull"], cwd=FOLDER)
+
+run_and_stream([
     sys.executable, "pe_model1_cbc_rf.py",
     "--input-csv", INPUT_CSV,
     "--outcome-correction", OUTCOME_CORRECTION,
     "--n-bootstrap", N_BOOTSTRAP,
-], cwd=FOLDER, check=True)
+], cwd=FOLDER)
