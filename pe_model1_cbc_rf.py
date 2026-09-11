@@ -42,6 +42,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 from scipy.special import logit
 from scipy.stats import pearsonr
+from joblib import Parallel, delayed
 from sklearn.calibration import calibration_curve
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -437,7 +438,55 @@ def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.
     return model, scaler, selected
 
 
-def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_state=42):
+def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
+    """One bootstrap resample: build a fresh RNG from `seed` (so parallel
+    workers each get an independent, reproducible random stream rather than
+    accidentally sharing state), resample, refit, and return the optimism
+    record. Split out of bootstrap_optimism() so it can be dispatched via
+    joblib.Parallel across resamples."""
+    rng = np.random.default_rng(seed)
+    n = len(X)
+    idx = rng.integers(0, n, size=n)
+    X_boot = X.iloc[idx]
+    y_boot = y.iloc[idx]
+
+    # n_jobs=1 (not -1) here: with joblib.Parallel already dispatching many
+    # resamples across processes at the outer level (see bootstrap_optimism
+    # below), adding a SECOND layer of multi-process parallelism inside each
+    # individual RF fit would mean repeatedly creating/tearing down nested
+    # worker pools -- exactly the pattern that caused a Windows/AV-monitored
+    # joblib deadlock on MyDRE previously. One parallel layer (the outer
+    # one) is enough; this inner fit stays single-threaded.
+    model, scaler, selected = fit_pipeline(
+        X_boot, y_boot, model1_features, rf_params, n_jobs=1
+    )
+
+    boot_pred = model.predict_proba(scaler.transform(X_boot[selected]))[:, 1]
+    boot_auc = roc_auc_score(y_boot, boot_pred)
+    boot_slope, boot_intercept = calibration_slope_intercept(y_boot, boot_pred)
+    boot_brier = brier_score_loss(y_boot, boot_pred)
+
+    orig_pred = model.predict_proba(scaler.transform(X[selected]))[:, 1]
+    orig_auc = roc_auc_score(y, orig_pred)
+    orig_slope, orig_intercept = calibration_slope_intercept(y, orig_pred)
+    orig_brier = brier_score_loss(y, orig_pred)
+
+    record = {
+        "auc": boot_auc - orig_auc,
+        "slope": boot_slope - orig_slope,
+        "intercept": boot_intercept - orig_intercept,
+        "brier": boot_brier - orig_brier,
+    }
+    for target in SENSITIVITY_TARGETS:
+        thr = find_threshold_for_sensitivity(y_boot, boot_pred, target)
+        boot_metrics = metrics_at_threshold(y_boot, boot_pred, thr)
+        orig_metrics = metrics_at_threshold(y, orig_pred, thr)
+        for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency"):
+            record[f"{target}_{key}"] = boot_metrics[key] - orig_metrics[key]
+    return record
+
+
+def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_state=42, n_jobs=-1):
     """Harrell-style bootstrap optimism correction: repeat the full
     model-building procedure (feature selection + fit) on n_boot bootstrap
     resamples, and for each compare its performance on the resample itself
@@ -455,58 +504,22 @@ def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_stat
     per resample -- re-running a full grid search 500x would multiply the
     already multi-minute grid search runtime by ~500x, which is not
     tractable even on this dummy dataset, let alone the full MyDRE cohort.
+
+    Resamples are dispatched across n_jobs cores via joblib.Parallel -- a
+    SINGLE worker pool for the whole loop, unlike per-resample RF fits
+    (kept single-threaded, see _bootstrap_iteration) which would otherwise
+    create/tear down 500 separate pools, the pattern that caused a Windows
+    joblib deadlock on MyDRE. One pool for 500 resamples is a fundamentally
+    different (much lower-risk) usage pattern than 500 pools for 1 fit each.
     """
-    rng = np.random.default_rng(random_state)
-    n = len(X)
-    records = []
+    master_rng = np.random.default_rng(random_state)
+    seeds = master_rng.integers(0, 2**32 - 1, size=n_boot)
 
-    for b in range(n_boot):
-        idx = rng.integers(0, n, size=n)
-        X_boot = X.iloc[idx]
-        y_boot = y.iloc[idx]
-
-        # n_jobs=1 (not -1) here: this fit runs inside a 500-iteration loop,
-        # so spinning up a fresh multi-process worker pool per resample --
-        # instead of once, as GridSearchCV above does -- risks the kind of
-        # joblib/multiprocessing deadlock seen on some Windows/AV-monitored
-        # environments (confirmed on MyDRE: hung inside joblib's Parallel
-        # waiting on RandomForestClassifier workers). A single resample's RF
-        # fit is small enough that single-threaded is an acceptable
-        # slowdown in exchange for not hanging indefinitely.
-        model, scaler, selected = fit_pipeline(
-            X_boot, y_boot, model1_features, rf_params, n_jobs=1
+    with Heartbeat(f"Bootstrap ({n_boot} resamples, n_jobs={n_jobs})"):
+        records = Parallel(n_jobs=n_jobs)(
+            delayed(_bootstrap_iteration)(int(seeds[b]), X, y, model1_features, rf_params)
+            for b in range(n_boot)
         )
-
-        boot_pred = model.predict_proba(scaler.transform(X_boot[selected]))[:, 1]
-        boot_auc = roc_auc_score(y_boot, boot_pred)
-        boot_slope, boot_intercept = calibration_slope_intercept(y_boot, boot_pred)
-        boot_brier = brier_score_loss(y_boot, boot_pred)
-
-        orig_pred = model.predict_proba(scaler.transform(X[selected]))[:, 1]
-        orig_auc = roc_auc_score(y, orig_pred)
-        orig_slope, orig_intercept = calibration_slope_intercept(y, orig_pred)
-        orig_brier = brier_score_loss(y, orig_pred)
-
-        record = {
-            "auc": boot_auc - orig_auc,
-            "slope": boot_slope - orig_slope,
-            "intercept": boot_intercept - orig_intercept,
-            "brier": boot_brier - orig_brier,
-        }
-        for target in SENSITIVITY_TARGETS:
-            thr = find_threshold_for_sensitivity(y_boot, boot_pred, target)
-            boot_metrics = metrics_at_threshold(y_boot, boot_pred, thr)
-            orig_metrics = metrics_at_threshold(y, orig_pred, thr)
-            for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency"):
-                record[f"{target}_{key}"] = boot_metrics[key] - orig_metrics[key]
-        records.append(record)
-
-        if (b + 1) % 50 == 0:
-            running = pd.DataFrame(records).mean()
-            print(f"  Bootstrap resample {b + 1}/{n_boot} "
-                  f"(running mean optimism: AUC={running['auc']:.4f}, "
-                  f"slope={running['slope']:.4f}, intercept={running['intercept']:.4f}, "
-                  f"Brier={running['brier']:.4f})")
 
     return pd.DataFrame(records)
 
