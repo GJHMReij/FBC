@@ -10,7 +10,7 @@ from datetime import datetime
 FOLDER = r"C:\Users\Max.Reijers\Documents\FBC_pe_models"
 INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\models august\CohortMLgeslacht.csv"
 OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\models august\df_met_script8000.xlsx"
-N_BOOTSTRAP = "50"  # TODO: set back to 500 for the final, definitive run
+N_BOOTSTRAP = "500"  # final, definitive run
 
 # Full transcript of this run, timestamped so earlier runs' logs aren't
 # overwritten -- lets you come back to exactly what a past run printed
