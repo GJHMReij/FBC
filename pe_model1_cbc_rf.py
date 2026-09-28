@@ -59,7 +59,7 @@ from joblib import Parallel, delayed
 from sklearn.calibration import calibration_curve
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, cross_val_predict
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import brier_score_loss, confusion_matrix, roc_auc_score, roc_curve
 import matplotlib.pyplot as plt
@@ -809,6 +809,21 @@ def main():
     print(f"\nBest params: {rf_params}")
     print(f"Best CV AUC: {grid_search.best_score_:.3f}")
 
+    # Out-of-fold cross-validated predictions with the chosen hyperparameters:
+    # each patient's prediction here comes from a fold that did NOT include
+    # them in training, so (unlike the apparent curve below) this is not
+    # optimism-inflated. Uses the same 5-fold split GridSearchCV already used,
+    # so its AUC should land close to Best CV AUC above -- this just turns
+    # that scalar into an actual ROC curve for reporting/plotting.
+    cv_model = RandomForestClassifier(
+        random_state=42, n_jobs=1, class_weight="balanced", oob_score=False, **rf_params
+    )
+    cv_pred = cross_val_predict(
+        cv_model, X_scaled, y, cv=5, method="predict_proba", n_jobs=-1
+    )[:, 1]
+    cv_auc = roc_auc_score(y, cv_pred)
+    print(f"Cross-validated AUC (out-of-fold, same 5 folds as GridSearchCV): {cv_auc:.3f}")
+
     # Apparent performance: the final model evaluated on the same data it was
     # trained on. This is optimistic (overfitting-inflated) by construction --
     # that's exactly the gap the bootstrap below estimates and corrects for.
@@ -880,9 +895,11 @@ def main():
     # is a scalar shift in AUC, not a separate curve, so it's reported in the
     # title alongside the (optimistic) apparent curve.
     fpr, tpr, _ = roc_curve(y, apparent_pred)
+    cv_fpr, cv_tpr, _ = roc_curve(y, cv_pred)
 
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.plot(fpr, tpr, label=f"Apparent (AUC={apparent_auc:.3f})", color="tab:blue")
+    ax.plot(cv_fpr, cv_tpr, label=f"Cross-validated (AUC={cv_auc:.3f})", color="tab:orange")
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Chance")
     ax.set_xlabel("1 - Specificity (False Positive Rate)")
     ax.set_ylabel("Sensitivity (True Positive Rate)")
