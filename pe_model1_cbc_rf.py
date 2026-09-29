@@ -520,13 +520,25 @@ def append_word_report(docx_path, title, lines, table_df=None, image_paths=None)
     print(f"Word report updated: {docx_path}")
 
 
-def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.8, n_jobs=-1):
+def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.8, n_jobs=-1,
+                  skip_filtering=False):
     """Run the full model-building procedure (feature selection -> scaling ->
     RF fit) on one dataset, with fixed rf_params. Used both for the apparent
     (full-data) model and for each bootstrap resample, so feature selection
-    is re-derived every time rather than reused across resamples."""
-    selected = calculate_correlation(X, model1_features, threshold=threshold, verbose=False)
-    selected = pearson_filter(X, y, selected, p_threshold=p_threshold, verbose=False)
+    is re-derived every time rather than reused across resamples.
+
+    skip_filtering=True bypasses the correlation/Pearson filters entirely
+    (uses all of model1_features) -- per Didier's request to check whether
+    these filters, inherited from the earlier pilot pipeline, are actually
+    needed for a Random Forest (which is far less sensitive to correlated
+    or weakly-associated features than the linear models they were
+    originally designed to protect).
+    """
+    if skip_filtering:
+        selected = list(model1_features)
+    else:
+        selected = calculate_correlation(X, model1_features, threshold=threshold, verbose=False)
+        selected = pearson_filter(X, y, selected, p_threshold=p_threshold, verbose=False)
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X[selected])
@@ -538,7 +550,7 @@ def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.
     return model, scaler, selected
 
 
-def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
+def _bootstrap_iteration(seed, X, y, model1_features, rf_params, skip_filtering=False):
     """One bootstrap resample: build a fresh RNG from `seed` (so parallel
     workers each get an independent, reproducible random stream rather than
     accidentally sharing state), resample, refit, and return the optimism
@@ -570,7 +582,7 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
     # joblib deadlock on MyDRE previously. One parallel layer (the outer
     # one) is enough; this inner fit stays single-threaded.
     model, scaler, selected = fit_pipeline(
-        X_boot, y_boot, model1_features, rf_params, n_jobs=1
+        X_boot, y_boot, model1_features, rf_params, n_jobs=1, skip_filtering=skip_filtering
     )
 
     boot_pred = model.predict_proba(scaler.transform(X_boot[selected]))[:, 1]
@@ -600,7 +612,8 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
     return record, oob_idx, oob_pred
 
 
-def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_state=42, n_jobs=-1):
+def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_state=42, n_jobs=-1,
+                        skip_filtering=False):
     """Harrell-style bootstrap optimism correction: repeat the full
     model-building procedure (feature selection + fit) on n_boot bootstrap
     resamples, and for each compare its performance on the resample itself
@@ -638,7 +651,9 @@ def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_stat
 
     with Heartbeat(f"Bootstrap ({n_boot} resamples, n_jobs={n_jobs})"):
         results = Parallel(n_jobs=n_jobs)(
-            delayed(_bootstrap_iteration)(int(seeds[b]), X, y, model1_features, rf_params)
+            delayed(_bootstrap_iteration)(
+                int(seeds[b]), X, y, model1_features, rf_params, skip_filtering=skip_filtering
+            )
             for b in range(n_boot)
         )
 
@@ -739,6 +754,14 @@ def parse_args():
              f"overriding '{OUTCOME_COL}'. Rows marked '{NOT_ASSESSABLE_VALUE}' or "
              "without a match are dropped.",
     )
+    parser.add_argument(
+        "--skip-feature-filtering", action="store_true",
+        help="Skip the correlation (|Spearman|>0.9) and Pearson-association "
+             "(p>0.8) feature filters entirely, using all candidate features "
+             "instead. For comparing against the filtered run, per Didier's "
+             "question about whether these filters (inherited from an earlier "
+             "pilot pipeline) are actually needed for a Random Forest.",
+    )
     return parser.parse_args()
 
 
@@ -808,10 +831,15 @@ def main():
     # No train/test split here -- per the analysis plan, overfitting is
     # instead quantified via bootstrap internal validation below, which uses
     # the full dataset for both model building and evaluation.
-    selected_features = calculate_correlation(X, model1_features, threshold=0.9)
-    selected_features = pearson_filter(X, y, selected_features, p_threshold=0.8)
-    print(f"\nFeatures after correlation+association filtering: "
-          f"{len(selected_features)} (was {len(model1_features)})")
+    if args.skip_feature_filtering:
+        selected_features = list(model1_features)
+        print(f"\nSkipping correlation+association filtering (--skip-feature-filtering): "
+              f"using all {len(selected_features)} candidate features")
+    else:
+        selected_features = calculate_correlation(X, model1_features, threshold=0.9)
+        selected_features = pearson_filter(X, y, selected_features, p_threshold=0.8)
+        print(f"\nFeatures after correlation+association filtering: "
+              f"{len(selected_features)} (was {len(model1_features)})")
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X[selected_features])
@@ -873,7 +901,10 @@ def main():
     # (optimistic) performance and its performance on the original full
     # dataset.
     print(f"\nRunning bootstrap internal validation ({args.n_bootstrap} resamples)...")
-    optimism, oob_pred_avg = bootstrap_optimism(X, y, model1_features, rf_params, n_boot=args.n_bootstrap)
+    optimism, oob_pred_avg = bootstrap_optimism(
+        X, y, model1_features, rf_params, n_boot=args.n_bootstrap,
+        skip_filtering=args.skip_feature_filtering,
+    )
     mean_optimism = optimism.mean()
 
     # OOB (out-of-bag) ROC curve: an actual, plottable curve for the internal
@@ -945,17 +976,22 @@ def main():
     ax.legend(loc="lower right")
     fig.tight_layout()
 
-    roc_out_path = REPO_ROOT / "model1_cbc_roc_curve.png"
+    # Suffix output filenames when comparing against the filtered (protocol)
+    # run, so this exploratory pass doesn't overwrite the already-reported
+    # results.
+    suffix = "_nofilter" if args.skip_feature_filtering else ""
+
+    roc_out_path = REPO_ROOT / f"model1_cbc_roc_curve{suffix}.png"
     fig.savefig(roc_out_path, dpi=150)
     print(f"\nROC curve saved to: {roc_out_path}")
 
-    save_roc_data("Model 1 (CBC)", fpr, tpr, corrected_auc, REPO_ROOT / "model1_roc_data.json")
+    save_roc_data("Model 1 (CBC)", fpr, tpr, corrected_auc, REPO_ROOT / f"model1_roc_data{suffix}.json")
 
     save_manuscript_data(
         "Model 1 (CBC)", corrected_auc, corrected_brier,
         corrected_threshold_df.loc[0.95].to_dict(),
         list(importances.sort_values(ascending=False).head(10).items()),
-        REPO_ROOT / "model1_manuscript_data.json",
+        REPO_ROOT / f"model1_manuscript_data{suffix}.json",
     )
 
     # Calibration plot: observed vs predicted probability, in deciles of
@@ -978,7 +1014,7 @@ def main():
     ax2.legend(loc="upper left")
     fig2.tight_layout()
 
-    cal_out_path = REPO_ROOT / "model1_cbc_calibration_curve.png"
+    cal_out_path = REPO_ROOT / f"model1_cbc_calibration_curve{suffix}.png"
     fig2.savefig(cal_out_path, dpi=150)
     print(f"Calibration curve saved to: {cal_out_path}")
 
