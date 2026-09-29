@@ -307,7 +307,7 @@ def main():
         apparent_slope, apparent_intercept = calibration_slope_intercept(y, apparent_pred)
         apparent_brier = brier_score_loss(y, apparent_pred)
 
-        optimism = bootstrap_optimism(
+        optimism, _ = bootstrap_optimism(
             X_m, y, model2_features, rf_params, n_boot=args.n_bootstrap, random_state=100 + m
         )
 

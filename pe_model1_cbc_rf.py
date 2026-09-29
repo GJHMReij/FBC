@@ -542,13 +542,25 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
     """One bootstrap resample: build a fresh RNG from `seed` (so parallel
     workers each get an independent, reproducible random stream rather than
     accidentally sharing state), resample, refit, and return the optimism
-    record. Split out of bootstrap_optimism() so it can be dispatched via
-    joblib.Parallel across resamples."""
+    record plus this resample's out-of-bag (OOB) predictions. Split out of
+    bootstrap_optimism() so it can be dispatched via joblib.Parallel across
+    resamples."""
     rng = np.random.default_rng(seed)
     n = len(X)
     idx = rng.integers(0, n, size=n)
     X_boot = X.iloc[idx]
     y_boot = y.iloc[idx]
+
+    # Out-of-bag (OOB): the ~36.8% of patients (in expectation) NOT drawn
+    # into this resample -- this model never saw them during fitting, so
+    # its predictions for them are genuinely held-out, unlike orig_pred
+    # below (which reuses ALL original patients, most of whom this model
+    # did see, just possibly more than once). Aggregating each patient's
+    # OOB predictions across all 500 resamples (in bootstrap_optimism)
+    # gives an honest internal-validation ROC curve -- the classic ".632
+    # bootstrap" OOB estimate, a recognized alternative/complement to the
+    # optimism-correction below, built from the same 500 models.
+    oob_idx = np.setdiff1d(np.arange(n), idx, assume_unique=False)
 
     # n_jobs=1 (not -1) here: with joblib.Parallel already dispatching many
     # resamples across processes at the outer level (see bootstrap_optimism
@@ -571,6 +583,8 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
     orig_slope, orig_intercept = calibration_slope_intercept(y, orig_pred)
     orig_brier = brier_score_loss(y, orig_pred)
 
+    oob_pred = model.predict_proba(scaler.transform(X.iloc[oob_idx][selected]))[:, 1]
+
     record = {
         "auc": boot_auc - orig_auc,
         "slope": boot_slope - orig_slope,
@@ -583,7 +597,7 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params):
         orig_metrics = metrics_at_threshold(y, orig_pred, thr)
         for key in ("sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"):
             record[f"{target}_{key}"] = boot_metrics[key] - orig_metrics[key]
-    return record
+    return record, oob_idx, oob_pred
 
 
 def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_state=42, n_jobs=-1):
@@ -611,17 +625,39 @@ def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_stat
     create/tear down 500 separate pools, the pattern that caused a Windows
     joblib deadlock on MyDRE. One pool for 500 resamples is a fundamentally
     different (much lower-risk) usage pattern than 500 pools for 1 fit each.
+
+    Also aggregates each resample's out-of-bag (OOB) predictions into one
+    per-patient averaged OOB prediction (averaged only over the resamples
+    where that patient was excluded from training) -- the ".632 bootstrap"
+    estimate, returned as `oob_pred_avg` so callers can plot an actual ROC
+    curve for the internal validation, not just the scalar optimism-
+    corrected AUC.
     """
     master_rng = np.random.default_rng(random_state)
     seeds = master_rng.integers(0, 2**32 - 1, size=n_boot)
 
     with Heartbeat(f"Bootstrap ({n_boot} resamples, n_jobs={n_jobs})"):
-        records = Parallel(n_jobs=n_jobs)(
+        results = Parallel(n_jobs=n_jobs)(
             delayed(_bootstrap_iteration)(int(seeds[b]), X, y, model1_features, rf_params)
             for b in range(n_boot)
         )
 
-    return pd.DataFrame(records)
+    records = [r[0] for r in results]
+
+    n = len(X)
+    oob_sum = np.zeros(n)
+    oob_count = np.zeros(n)
+    for _, oob_idx, oob_pred in results:
+        oob_sum[oob_idx] += oob_pred
+        oob_count[oob_idx] += 1
+    with np.errstate(invalid="ignore"):
+        oob_pred_avg = np.where(oob_count > 0, oob_sum / oob_count, np.nan)
+    n_never_oob = int(np.sum(oob_count == 0))
+    if n_never_oob:
+        print(f"Warning: {n_never_oob} patient(s) were never out-of-bag across "
+              f"{n_boot} resamples -- excluded from the OOB ROC curve.")
+
+    return pd.DataFrame(records), oob_pred_avg
 
 
 def apply_outcome_correction(df, correction_path):
@@ -837,8 +873,21 @@ def main():
     # (optimistic) performance and its performance on the original full
     # dataset.
     print(f"\nRunning bootstrap internal validation ({args.n_bootstrap} resamples)...")
-    optimism = bootstrap_optimism(X, y, model1_features, rf_params, n_boot=args.n_bootstrap)
+    optimism, oob_pred_avg = bootstrap_optimism(X, y, model1_features, rf_params, n_boot=args.n_bootstrap)
     mean_optimism = optimism.mean()
+
+    # OOB (out-of-bag) ROC curve: an actual, plottable curve for the internal
+    # validation (unlike the scalar optimism-corrected AUC above), built from
+    # each patient's averaged prediction across only the bootstrap models
+    # that did NOT train on them -- see bootstrap_optimism()/
+    # _bootstrap_iteration() for how these are collected.
+    oob_mask = ~np.isnan(oob_pred_avg)
+    y_oob = y.to_numpy()[oob_mask]
+    oob_pred_valid = oob_pred_avg[oob_mask]
+    oob_auc = roc_auc_score(y_oob, oob_pred_valid)
+    oob_fpr, oob_tpr, _ = roc_curve(y_oob, oob_pred_valid)
+    print(f"\nInternal validation (OOB) AUC: {oob_auc:.3f} "
+          f"(n={oob_mask.sum()} patients with >=1 out-of-bag prediction)")
     corrected_auc = apparent_auc - mean_optimism["auc"]
     corrected_slope = apparent_slope - mean_optimism["slope"]
     corrected_intercept = apparent_intercept - mean_optimism["intercept"]
@@ -876,13 +925,15 @@ def main():
           f"(bootstrap-corrected, n={args.n_bootstrap} resamples):")
     print(corrected_threshold_df.round(3))
 
-    # ROC curve of the apparent (full-data) model. The bootstrap correction
-    # is a scalar shift in AUC, not a separate curve, so it's reported in the
-    # title alongside the (optimistic) apparent curve.
+    # ROC curve of the apparent (full-data) model, plus the internal-
+    # validation OOB curve computed above -- an actual curve built from the
+    # same 500 bootstrap models, not just the scalar optimism-corrected AUC.
     fpr, tpr, _ = roc_curve(y, apparent_pred)
 
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.plot(fpr, tpr, label=f"Apparent (AUC={apparent_auc:.3f})", color="tab:blue")
+    ax.plot(oob_fpr, oob_tpr,
+            label=f"Internal validation, OOB (AUC={oob_auc:.3f})", color="tab:orange")
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Chance")
     ax.set_xlabel("1 - Specificity (False Positive Rate)")
     ax.set_ylabel("Sensitivity (True Positive Rate)")
