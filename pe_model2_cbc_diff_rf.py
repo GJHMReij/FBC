@@ -295,7 +295,7 @@ def main():
     imputation1_importances = None
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
-        model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params)
+        model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params, skip_correlation_filter=False)
         if m == 0:
             # Feature importance ranking (for the manuscript's Table 3) is
             # taken from imputation 1 only, consistent with hyperparameter
@@ -308,7 +308,8 @@ def main():
         apparent_brier = brier_score_loss(y, apparent_pred)
 
         optimism, _ = bootstrap_optimism(
-            X_m, y, model2_features, rf_params, n_boot=args.n_bootstrap, random_state=100 + m
+            X_m, y, model2_features, rf_params, n_boot=args.n_bootstrap, random_state=100 + m,
+            skip_correlation_filter=False,
         )
 
         corrected_auc = apparent_auc - optimism["auc"].mean()
@@ -376,7 +377,7 @@ def main():
     fig, ax = plt.subplots(figsize=(6, 6))
     all_preds = []
     for m, X_m in enumerate(imputed_datasets):
-        model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params)
+        model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params, skip_correlation_filter=False)
         pred_m = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
         all_preds.append(pred_m)
         from sklearn.metrics import roc_curve

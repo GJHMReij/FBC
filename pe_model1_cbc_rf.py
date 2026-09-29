@@ -521,23 +521,25 @@ def append_word_report(docx_path, title, lines, table_df=None, image_paths=None)
 
 
 def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.8, n_jobs=-1,
-                  skip_filtering=False):
+                  skip_correlation_filter=True, skip_pearson_filter=False):
     """Run the full model-building procedure (feature selection -> scaling ->
     RF fit) on one dataset, with fixed rf_params. Used both for the apparent
     (full-data) model and for each bootstrap resample, so feature selection
     is re-derived every time rather than reused across resamples.
 
-    skip_filtering=True bypasses the correlation/Pearson filters entirely
-    (uses all of model1_features) -- per Didier's request to check whether
-    these filters, inherited from the earlier pilot pipeline, are actually
-    needed for a Random Forest (which is far less sensitive to correlated
-    or weakly-associated features than the linear models they were
-    originally designed to protect).
+    skip_correlation_filter defaults to True as of 2026-09-29: the
+    correlation filter (inherited from an earlier pilot pipeline built
+    around linear models, far more sensitive to correlated features than a
+    Random Forest) was dropped per Didier's feedback. Pass
+    skip_correlation_filter=False (--enable-correlation-filter on the CLI)
+    to reproduce the earlier filtered behaviour for comparison.
+    skip_pearson_filter is independent and still off (filter applied) by
+    default.
     """
-    if skip_filtering:
-        selected = list(model1_features)
-    else:
-        selected = calculate_correlation(X, model1_features, threshold=threshold, verbose=False)
+    selected = list(model1_features)
+    if not skip_correlation_filter:
+        selected = calculate_correlation(X, selected, threshold=threshold, verbose=False)
+    if not skip_pearson_filter:
         selected = pearson_filter(X, y, selected, p_threshold=p_threshold, verbose=False)
 
     scaler = StandardScaler()
@@ -550,7 +552,8 @@ def fit_pipeline(X, y, model1_features, rf_params, threshold=0.9, p_threshold=0.
     return model, scaler, selected
 
 
-def _bootstrap_iteration(seed, X, y, model1_features, rf_params, skip_filtering=False):
+def _bootstrap_iteration(seed, X, y, model1_features, rf_params,
+                          skip_correlation_filter=True, skip_pearson_filter=False):
     """One bootstrap resample: build a fresh RNG from `seed` (so parallel
     workers each get an independent, reproducible random stream rather than
     accidentally sharing state), resample, refit, and return the optimism
@@ -582,7 +585,8 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params, skip_filtering=
     # joblib deadlock on MyDRE previously. One parallel layer (the outer
     # one) is enough; this inner fit stays single-threaded.
     model, scaler, selected = fit_pipeline(
-        X_boot, y_boot, model1_features, rf_params, n_jobs=1, skip_filtering=skip_filtering
+        X_boot, y_boot, model1_features, rf_params, n_jobs=1,
+        skip_correlation_filter=skip_correlation_filter, skip_pearson_filter=skip_pearson_filter,
     )
 
     boot_pred = model.predict_proba(scaler.transform(X_boot[selected]))[:, 1]
@@ -613,7 +617,7 @@ def _bootstrap_iteration(seed, X, y, model1_features, rf_params, skip_filtering=
 
 
 def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_state=42, n_jobs=-1,
-                        skip_filtering=False):
+                        skip_correlation_filter=True, skip_pearson_filter=False):
     """Harrell-style bootstrap optimism correction: repeat the full
     model-building procedure (feature selection + fit) on n_boot bootstrap
     resamples, and for each compare its performance on the resample itself
@@ -652,7 +656,9 @@ def bootstrap_optimism(X, y, model1_features, rf_params, n_boot=500, random_stat
     with Heartbeat(f"Bootstrap ({n_boot} resamples, n_jobs={n_jobs})"):
         results = Parallel(n_jobs=n_jobs)(
             delayed(_bootstrap_iteration)(
-                int(seeds[b]), X, y, model1_features, rf_params, skip_filtering=skip_filtering
+                int(seeds[b]), X, y, model1_features, rf_params,
+                skip_correlation_filter=skip_correlation_filter,
+                skip_pearson_filter=skip_pearson_filter,
             )
             for b in range(n_boot)
         )
@@ -755,12 +761,20 @@ def parse_args():
              "without a match are dropped.",
     )
     parser.add_argument(
-        "--skip-feature-filtering", action="store_true",
-        help="Skip the correlation (|Spearman|>0.9) and Pearson-association "
-             "(p>0.8) feature filters entirely, using all candidate features "
-             "instead. For comparing against the filtered run, per Didier's "
-             "question about whether these filters (inherited from an earlier "
-             "pilot pipeline) are actually needed for a Random Forest.",
+        "--enable-correlation-filter", action="store_true",
+        help="Re-enable the correlation filter (drop one of each pair of "
+             "features with |Spearman|>0.9). OFF by default as of "
+             "2026-09-29, per Didier's feedback that this filter -- "
+             "inherited from an earlier pilot pipeline built around linear "
+             "models -- likely isn't needed for a Random Forest. Pass this "
+             "flag to reproduce the earlier filtered behaviour for comparison.",
+    )
+    parser.add_argument(
+        "--skip-pearson-filter", action="store_true",
+        help="Skip the Pearson-association filter (drop features with "
+             "p>0.8 association with the outcome). Independent of "
+             "--skip-correlation-filter; combine both to use all candidate "
+             "features with no filtering at all.",
     )
     return parser.parse_args()
 
@@ -825,21 +839,28 @@ def main():
     y = y.loc[complete_mask]
 
     # Feature selection on the FULL dataset, matching the existing PE pilot's
-    # approach (generate_pe_report.py / model_training_methods.py):
-    # 1) drop one of each pair of features with |Spearman corr| > 0.9
+    # approach (generate_pe_report.py / model_training_methods.py), MINUS the
+    # correlation filter -- dropped by default as of 2026-09-29 per Didier's
+    # feedback that it likely isn't needed for a Random Forest (pass
+    # --enable-correlation-filter to bring it back for comparison):
+    # 1) [dropped by default] one of each pair of features with |Spearman
+    #    corr| > 0.9
     # 2) drop features with weak (Pearson p > 0.8) association with outcome
     # No train/test split here -- per the analysis plan, overfitting is
     # instead quantified via bootstrap internal validation below, which uses
     # the full dataset for both model building and evaluation.
-    if args.skip_feature_filtering:
-        selected_features = list(model1_features)
-        print(f"\nSkipping correlation+association filtering (--skip-feature-filtering): "
-              f"using all {len(selected_features)} candidate features")
+    skip_correlation_filter = not args.enable_correlation_filter
+    selected_features = list(model1_features)
+    if skip_correlation_filter:
+        print("\nSkipping correlation filter (default as of 2026-09-29; "
+              "pass --enable-correlation-filter to re-enable)")
     else:
-        selected_features = calculate_correlation(X, model1_features, threshold=0.9)
+        selected_features = calculate_correlation(X, selected_features, threshold=0.9)
+    if args.skip_pearson_filter:
+        print("Skipping Pearson-association filter (--skip-pearson-filter)")
+    else:
         selected_features = pearson_filter(X, y, selected_features, p_threshold=0.8)
-        print(f"\nFeatures after correlation+association filtering: "
-              f"{len(selected_features)} (was {len(model1_features)})")
+    print(f"\nFeatures after filtering: {len(selected_features)} (was {len(model1_features)})")
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X[selected_features])
@@ -903,7 +924,8 @@ def main():
     print(f"\nRunning bootstrap internal validation ({args.n_bootstrap} resamples)...")
     optimism, oob_pred_avg = bootstrap_optimism(
         X, y, model1_features, rf_params, n_boot=args.n_bootstrap,
-        skip_filtering=args.skip_feature_filtering,
+        skip_correlation_filter=skip_correlation_filter,
+        skip_pearson_filter=args.skip_pearson_filter,
     )
     mean_optimism = optimism.mean()
 
@@ -976,10 +998,17 @@ def main():
     ax.legend(loc="lower right")
     fig.tight_layout()
 
-    # Suffix output filenames when comparing against the filtered (protocol)
-    # run, so this exploratory pass doesn't overwrite the already-reported
-    # results.
-    suffix = "_nofilter" if args.skip_feature_filtering else ""
+    # Suffix output filenames for any run that deviates from the current
+    # default (correlation filter off, Pearson filter on), so a comparison
+    # run doesn't overwrite the standard results.
+    if args.enable_correlation_filter and args.skip_pearson_filter:
+        suffix = "_withcorr_nopearson"
+    elif args.enable_correlation_filter:
+        suffix = "_withcorr"
+    elif args.skip_pearson_filter:
+        suffix = "_nopearson"
+    else:
+        suffix = ""
 
     roc_out_path = REPO_ROOT / f"model1_cbc_roc_curve{suffix}.png"
     fig.savefig(roc_out_path, dpi=150)

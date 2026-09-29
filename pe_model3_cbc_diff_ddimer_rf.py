@@ -185,14 +185,15 @@ def main():
     imputation1_importances = None
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
-        model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params)
+        model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params, skip_correlation_filter=False)
         apparent_pred = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
         apparent_auc = roc_auc_score(y, apparent_pred)
         apparent_slope, apparent_intercept = calibration_slope_intercept(y, apparent_pred)
         apparent_brier = brier_score_loss(y, apparent_pred)
 
         optimism, _ = bootstrap_optimism(
-            X_m, y, model3_features, rf_params, n_boot=args.n_bootstrap, random_state=200 + m
+            X_m, y, model3_features, rf_params, n_boot=args.n_bootstrap, random_state=200 + m,
+            skip_correlation_filter=False,
         )
 
         corrected_auc = apparent_auc - optimism["auc"].mean()
@@ -263,7 +264,7 @@ def main():
     fig, ax = plt.subplots(figsize=(6, 6))
     all_preds = []
     for m, X_m in enumerate(imputed_datasets):
-        model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params)
+        model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params, skip_correlation_filter=False)
         pred_m = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
         all_preds.append(pred_m)
         fpr, tpr, _ = roc_curve(y, pred_m)
