@@ -1024,12 +1024,23 @@ def main():
     )
 
     # Calibration plot: observed vs predicted probability, in deciles of
-    # predicted risk, plus the bootstrap-corrected calibration line.
+    # predicted risk. Previously this only plotted the apparent (in-sample,
+    # optimistic) curve while the title quoted the bootstrap-corrected
+    # slope/intercept -- a mismatch between what's drawn and what's
+    # reported (the same issue Didier flagged for the ROC curve). Now also
+    # plots the OOB internal-validation curve (same oob_pred_avg as the ROC
+    # curve above), with its own slope/intercept computed directly from
+    # those predictions, so the second curve and its numbers actually match.
     obs_freq, pred_freq = calibration_curve(y, apparent_pred, n_bins=10, strategy="quantile")
+    oob_obs_freq, oob_pred_freq = calibration_curve(y_oob, oob_pred_valid, n_bins=10, strategy="quantile")
+    oob_slope, oob_intercept = calibration_slope_intercept(y_oob, oob_pred_valid)
 
     fig2, ax2 = plt.subplots(figsize=(6, 6))
     ax2.plot(pred_freq, obs_freq, marker="o", label="Apparent (observed vs predicted)",
               color="tab:blue")
+    ax2.plot(oob_pred_freq, oob_obs_freq, marker="o",
+              label=f"Internal validation, OOB (slope={oob_slope:.3f}, intercept={oob_intercept:.3f})",
+              color="tab:orange")
     ax2.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Perfect calibration")
     ax2.set_xlabel("Predicted probability")
     ax2.set_ylabel("Observed frequency")
