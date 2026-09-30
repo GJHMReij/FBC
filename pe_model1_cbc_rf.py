@@ -867,28 +867,35 @@ def main():
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X[selected_features])
 
-    # Hyperparameter search via 5-fold CV (scoring on ROC AUC), reusing the
-    # "random_forest_grid_search" grid from model_training_methods.py: it is
-    # specifically tuned toward shallow trees / large leaves / aggressive
-    # feature subsampling to counter overfitting on datasets this size.
-    # Tuned ONCE here on the full data, then held fixed through the bootstrap
-    # loop below -- re-running this search inside every one of 500 bootstrap
-    # resamples would multiply runtime by ~500x, which is intractable.
+    # Hyperparameter search via 5-fold CV (scoring on ROC AUC). The original
+    # grid (from model_training_methods.py) was tuned toward shallow trees /
+    # large leaves to counter overfitting, but that also structurally
+    # compresses predicted probabilities toward the middle (a leaf with
+    # min_samples_leaf=25+ almost always contains a mix of both classes, so
+    # it can never output a very confident prediction). Widened as of
+    # 2026-09-30 to also let GridSearchCV consider deeper trees and smaller
+    # leaves -- letting the model "dare" to predict closer to 0/1 -- while
+    # keeping the conservative end of the original grid too, so the search
+    # can still fall back to it if the more flexible options overfit (worse
+    # CV-AUC). Tuned ONCE here on the full data, then held fixed through the
+    # bootstrap loop below -- re-running this search inside every one of 500
+    # bootstrap resamples would multiply runtime by ~500x, which is
+    # intractable.
     base_model = RandomForestClassifier(
         random_state=42, n_jobs=-1, class_weight="balanced", oob_score=False
     )
     param_grid = {
-        "n_estimators": [200, 300, 500],
-        "max_depth": [3, 5, 7, 9],
-        "min_samples_leaf": [10, 25, 50],
-        "min_samples_split": [20, 50, 100],
-        "max_features": ["sqrt", 0.2, 0.3],
+        "n_estimators": [300, 500],
+        "max_depth": [5, 9, 15, None],
+        "min_samples_leaf": [1, 10, 25],
+        "min_samples_split": [2, 20, 50],
+        "max_features": ["sqrt", 0.3],
     }
     grid_search = GridSearchCV(
         base_model, param_grid, cv=5, scoring="roc_auc",
         n_jobs=-1, refit=True, verbose=0,
     )
-    print("\nFitting GridSearchCV (1620 fits, this can take 15-30+ min on the real cohort)...")
+    print("\nFitting GridSearchCV (720 fits, this can take 15-30+ min on the real cohort)...")
     with Heartbeat("GridSearchCV"):
         grid_search.fit(X_scaled, y)
     model = grid_search.best_estimator_
