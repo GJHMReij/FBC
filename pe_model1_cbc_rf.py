@@ -978,13 +978,14 @@ def main():
           f"(bootstrap-corrected, n={args.n_bootstrap} resamples):")
     print(corrected_threshold_df.round(3))
 
-    # ROC curve of the apparent (full-data) model, plus the internal-
-    # validation OOB curve computed above -- an actual curve built from the
-    # same 500 bootstrap models, not just the scalar optimism-corrected AUC.
-    fpr, tpr, _ = roc_curve(y, apparent_pred)
-
+    # ROC curve of the internal-validation OOB predictions -- an actual
+    # curve built from the same 500 bootstrap models, not just the scalar
+    # optimism-corrected AUC. The apparent (in-sample) curve is deliberately
+    # NOT plotted here: it only reflects training-data performance, doesn't
+    # match the bootstrap-corrected numbers reported alongside it, and
+    # caused real confusion when shown before. Its AUC is still printed to
+    # the console above for reference.
     fig, ax = plt.subplots(figsize=(6, 6))
-    ax.plot(fpr, tpr, label=f"Apparent (AUC={apparent_auc:.3f})", color="tab:blue")
     ax.plot(oob_fpr, oob_tpr,
             label=f"Internal validation, OOB (AUC={oob_auc:.3f})", color="tab:orange")
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Chance")
@@ -1014,7 +1015,7 @@ def main():
     fig.savefig(roc_out_path, dpi=150)
     print(f"\nROC curve saved to: {roc_out_path}")
 
-    save_roc_data("Model 1 (CBC)", fpr, tpr, corrected_auc, REPO_ROOT / f"model1_roc_data{suffix}.json")
+    save_roc_data("Model 1 (CBC)", oob_fpr, oob_tpr, corrected_auc, REPO_ROOT / f"model1_roc_data{suffix}.json")
 
     save_manuscript_data(
         "Model 1 (CBC)", corrected_auc, corrected_brier,
@@ -1027,17 +1028,17 @@ def main():
     # predicted risk. Previously this only plotted the apparent (in-sample,
     # optimistic) curve while the title quoted the bootstrap-corrected
     # slope/intercept -- a mismatch between what's drawn and what's
-    # reported (the same issue Didier flagged for the ROC curve). Now also
-    # plots the OOB internal-validation curve (same oob_pred_avg as the ROC
-    # curve above), with its own slope/intercept computed directly from
-    # those predictions, so the second curve and its numbers actually match.
-    obs_freq, pred_freq = calibration_curve(y, apparent_pred, n_bins=10, strategy="quantile")
+    # reported (the same issue Didier flagged for the ROC curve), and its
+    # narrow, training-data-only range caused real confusion when shown
+    # before. Only the OOB internal-validation curve is plotted now (same
+    # oob_pred_avg as the ROC curve above), with its own slope/intercept
+    # computed directly from those predictions, so the curve and its label
+    # actually match. The apparent slope/intercept are still printed to the
+    # console above for reference.
     oob_obs_freq, oob_pred_freq = calibration_curve(y_oob, oob_pred_valid, n_bins=10, strategy="quantile")
     oob_slope, oob_intercept = calibration_slope_intercept(y_oob, oob_pred_valid)
 
     fig2, ax2 = plt.subplots(figsize=(6, 6))
-    ax2.plot(pred_freq, obs_freq, marker="o", label="Apparent (observed vs predicted)",
-              color="tab:blue")
     ax2.plot(oob_pred_freq, oob_obs_freq, marker="o",
               label=f"Internal validation, OOB (slope={oob_slope:.3f}, intercept={oob_intercept:.3f})",
               color="tab:orange")
