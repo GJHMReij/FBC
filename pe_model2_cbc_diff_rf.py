@@ -30,7 +30,8 @@ from sklearn.impute import IterativeImputer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import brier_score_loss, roc_auc_score
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss, roc_auc_score, roc_curve
 import matplotlib.pyplot as plt
 
 from pe_model1_cbc_rf import (
@@ -289,6 +290,7 @@ def main():
     # estimate AND its within-imputation bootstrap variance for Rubin pooling.
     per_imputation_results = []
     imputation1_importances = None
+    all_oob_preds = []
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
         model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params, skip_correlation_filter=False, skip_pearson_filter=False)
@@ -303,10 +305,11 @@ def main():
         apparent_slope, apparent_intercept = calibration_slope_intercept(y, apparent_pred)
         apparent_brier = brier_score_loss(y, apparent_pred)
 
-        optimism, _ = bootstrap_optimism(
+        optimism, oob_pred_avg = bootstrap_optimism(
             X_m, y, model2_features, rf_params, n_boot=args.n_bootstrap, random_state=100 + m,
             skip_correlation_filter=False, skip_pearson_filter=False,
         )
+        all_oob_preds.append(oob_pred_avg)
 
         corrected_auc = apparent_auc - optimism["auc"].mean()
         corrected_slope = apparent_slope - optimism["slope"].mean()
@@ -367,24 +370,33 @@ def main():
           f"(bootstrap-corrected + Rubin-pooled across imputations):")
     print(pooled_threshold_df.round(3))
 
-    # Plots: overlay each imputation's apparent ROC/calibration curve (thin,
-    # transparent) to visualise between-imputation spread, with the pooled
-    # AUC/calibration numbers in the title.
+    # Pool OOB (out-of-bag) predictions across the 10 imputations: for each
+    # patient, average their OOB prediction (already itself an average
+    # across ~184 bootstrap resamples, see bootstrap_optimism()) over
+    # whichever imputations gave a valid value (nanmean). This single
+    # pooled array is a genuine internal-validation prediction per patient
+    # (never trained on by the models that produced it), unlike the
+    # apparent per-imputation curves previously plotted here, which didn't
+    # match the pooled bootstrap-corrected numbers shown alongside them
+    # (same mismatch issue fixed for Model 1).
+    with np.errstate(invalid="ignore"):
+        oob_pred_pooled = np.nanmean(np.array(all_oob_preds), axis=0)
+    oob_mask = ~np.isnan(oob_pred_pooled)
+    y_oob = y.to_numpy()[oob_mask]
+    oob_pred_valid = oob_pred_pooled[oob_mask]
+    oob_auc = roc_auc_score(y_oob, oob_pred_valid)
+    oob_fpr, oob_tpr, _ = roc_curve(y_oob, oob_pred_valid)
+    print(f"\nPooled internal validation (OOB) AUC: {oob_auc:.3f} "
+          f"(n={oob_mask.sum()} patients with >=1 out-of-bag prediction)")
+
     fig, ax = plt.subplots(figsize=(6, 6))
-    all_preds = []
-    for m, X_m in enumerate(imputed_datasets):
-        model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params, skip_correlation_filter=False, skip_pearson_filter=False)
-        pred_m = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
-        all_preds.append(pred_m)
-        from sklearn.metrics import roc_curve
-        fpr, tpr, _ = roc_curve(y, pred_m)
-        ax.plot(fpr, tpr, color="tab:blue", alpha=0.3,
-                 label="Per-imputation (apparent)" if m == 0 else None)
+    ax.plot(oob_fpr, oob_tpr,
+            label=f"Internal validation, OOB (AUC={oob_auc:.3f})", color="tab:orange")
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Chance")
     ax.set_xlabel("1 - Specificity (False Positive Rate)")
     ax.set_ylabel("Sensitivity (True Positive Rate)")
     ax.set_title(
-        "Model 2 (age + sex + creatinine + CBC + DIFF) - ROC curves\n"
+        "Model 2 (age + sex + creatinine + CBC + DIFF) - ROC curve\n"
         f"Pooled bootstrap-corrected AUC={pooled['auc'][0]:.3f} "
         f"(SE={pooled['auc'][1]:.3f}, {args.n_imputations} imputations x "
         f"{args.n_bootstrap} resamples)"
@@ -395,13 +407,34 @@ def main():
     fig.savefig(roc_out_path, dpi=150)
     print(f"\nROC curve saved to: {roc_out_path}")
 
-    # Pooled (mean predicted probability across imputations) ROC curve, for
-    # combine_roc_curves.py -- a single representative curve per model,
-    # despite Model 2's underlying multiple-imputation structure.
-    mean_pred = np.mean(all_preds, axis=0)
-    fpr_pooled, tpr_pooled, _ = roc_curve(y, mean_pred)
-    save_roc_data("Model 2 (+DIFF)", fpr_pooled, tpr_pooled, pooled["auc"][0],
+    save_roc_data("Model 2 (+DIFF)", oob_fpr, oob_tpr, pooled["auc"][0],
                   REPO_ROOT / "model2_roc_data.json")
+
+    # Calibration plot (new -- Model 2 previously had no calibration plot at
+    # all). Uses the same pooled OOB predictions as the ROC curve above.
+    oob_obs_freq, oob_pred_freq = calibration_curve(y_oob, oob_pred_valid, n_bins=10, strategy="quantile")
+    oob_cal_slope, oob_cal_intercept = calibration_slope_intercept(y_oob, oob_pred_valid)
+
+    fig2, ax2 = plt.subplots(figsize=(6, 6))
+    ax2.plot(oob_pred_freq, oob_obs_freq, marker="o",
+              label=f"Internal validation, OOB (slope={oob_cal_slope:.3f}, intercept={oob_cal_intercept:.3f})",
+              color="tab:orange")
+    ax2.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Perfect calibration")
+    ax2.set_xlabel("Predicted probability")
+    ax2.set_ylabel("Observed frequency")
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    ax2.set_title(
+        "Model 2 (age + sex + creatinine + CBC + DIFF) - Calibration plot\n"
+        f"Pooled bootstrap-corrected slope={pooled['slope'][0]:.3f}, "
+        f"intercept={pooled['intercept'][0]:.3f} ({args.n_imputations} imputations x "
+        f"{args.n_bootstrap} resamples)"
+    )
+    ax2.legend(loc="upper left")
+    fig2.tight_layout()
+    cal_out_path = REPO_ROOT / "model2_cbc_diff_calibration_curve.png"
+    fig2.savefig(cal_out_path, dpi=150)
+    print(f"Calibration curve saved to: {cal_out_path}")
 
     save_manuscript_data(
         "Model 2 (+DIFF)", pooled["auc"][0], pooled["brier"][0],
