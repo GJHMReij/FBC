@@ -55,6 +55,7 @@ warnings.filterwarnings(
 
 from scipy.special import logit
 from scipy.stats import pearsonr
+import joblib
 from joblib import Parallel, delayed
 from sklearn.calibration import calibration_curve
 from sklearn.ensemble import RandomForestClassifier
@@ -894,6 +895,19 @@ def main():
     model = grid_search.best_estimator_
     rf_params = grid_search.best_params_
     print(f"\nBest params: {rf_params}")
+
+    # Save the fitted model + scaler + exact feature list/order, so it can
+    # later be applied unchanged to external data (e.g. UCLH/Barts) without
+    # retraining -- external validation means testing THIS specific model on
+    # new data, not building a fresh model on that data. Loading/applying to
+    # external data is a separate, not-yet-built step; this just persists
+    # what's needed for that later.
+    model_out_path = REPO_ROOT / "model1_fitted.joblib"
+    joblib.dump(
+        {"model": model, "scaler": scaler, "features": selected_features, "rf_params": rf_params},
+        model_out_path,
+    )
+    print(f"Fitted model saved to: {model_out_path}")
     print(f"Best CV AUC: {grid_search.best_score_:.3f}")
 
     # Apparent performance: the final model evaluated on the same data it was

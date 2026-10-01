@@ -19,6 +19,7 @@ MyDRE, point it at the real cohort CSV instead, without touching the code:
 import argparse
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -291,9 +292,11 @@ def main():
     per_imputation_results = []
     imputation1_importances = None
     all_oob_preds = []
+    fitted_imputation_models = []
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
         model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params, skip_correlation_filter=False, skip_pearson_filter=False)
+        fitted_imputation_models.append({"model": model, "scaler": scaler, "features": selected})
         if m == 0:
             # Feature importance ranking (for the manuscript's Table 3) is
             # taken from imputation 1 only, consistent with hyperparameter
@@ -335,6 +338,19 @@ def main():
             "threshold": threshold_corrected,
             "optimism": optimism,
         })
+
+    # Save all 10 fitted imputation models (+ their scalers/feature lists)
+    # and the fixed rf_params, so they can later be applied unchanged to
+    # external data (e.g. UCLH/Barts) without retraining. How to combine
+    # the 10 models' predictions for a new patient (average? per-imputation
+    # ensemble?) is a separate, not-yet-built step; this just persists what
+    # would be needed for that later.
+    model_out_path = REPO_ROOT / "model2_fitted.joblib"
+    joblib.dump(
+        {"imputation_models": fitted_imputation_models, "rf_params": rf_params},
+        model_out_path,
+    )
+    print(f"\nFitted models (all {args.n_imputations} imputations) saved to: {model_out_path}")
 
     # Pool across imputations via Rubin's rule.
     print(f"\n{'=' * 60}\nPooled results across {args.n_imputations} MICE imputations "

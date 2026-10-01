@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.png
+*.joblib
 .claude/
 
 # Real (non-dummy) cohort data must never be committed
