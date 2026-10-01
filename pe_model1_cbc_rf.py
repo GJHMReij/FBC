@@ -1028,7 +1028,7 @@ def main():
         suffix = ""
 
     roc_out_path = REPO_ROOT / f"model1_cbc_roc_curve{suffix}.png"
-    fig.savefig(roc_out_path, dpi=150)
+    fig.savefig(roc_out_path, dpi=150, bbox_inches="tight")
     print(f"\nROC curve saved to: {roc_out_path}")
 
     save_roc_data("Model 1 (CBC)", oob_fpr, oob_tpr, corrected_auc, REPO_ROOT / f"model1_roc_data{suffix}.json")
@@ -1072,7 +1072,7 @@ def main():
     fig2.tight_layout()
 
     cal_out_path = REPO_ROOT / f"model1_cbc_calibration_curve{suffix}.png"
-    fig2.savefig(cal_out_path, dpi=150)
+    fig2.savefig(cal_out_path, dpi=150, bbox_inches="tight")
     print(f"Calibration curve saved to: {cal_out_path}")
 
 

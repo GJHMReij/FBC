@@ -299,9 +299,10 @@ def main():
     # search is tuned for, and re-tuning per imputation would multiply the
     # already-expensive grid search by n_imputations for no real benefit.
     print("\nTuning hyperparameters once, on the first imputed dataset...")
+    print("Skipping correlation + Pearson-association filters (uniform with Model 1/3 as "
+          "of 2026-10-01): using all candidate features")
     X0 = imputed_datasets[0]
-    selected0 = calculate_correlation(X0, model2_features, threshold=0.9, verbose=False)
-    selected0 = pearson_filter(X0, y, selected0, p_threshold=0.8, verbose=False)
+    selected0 = list(model2_features)
     scaler0 = StandardScaler()
     X0_scaled = scaler0.fit_transform(X0[selected0])
     base_model = RandomForestClassifier(
@@ -332,7 +333,7 @@ def main():
     fitted_imputation_models = []
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
-        model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params, skip_correlation_filter=False, skip_pearson_filter=False)
+        model, scaler, selected = fit_pipeline(X_m, y, model2_features, rf_params, skip_correlation_filter=True, skip_pearson_filter=True)
         fitted_imputation_models.append({"model": model, "scaler": scaler, "features": selected})
         if m == 0:
             # Feature importance ranking (for the manuscript's Table 3) is
@@ -347,7 +348,7 @@ def main():
 
         optimism, oob_pred_avg = bootstrap_optimism(
             X_m, y, model2_features, rf_params, n_boot=args.n_bootstrap, random_state=100 + m,
-            skip_correlation_filter=False, skip_pearson_filter=False,
+            skip_correlation_filter=True, skip_pearson_filter=True,
         )
         all_oob_preds.append(oob_pred_avg)
 
@@ -457,7 +458,7 @@ def main():
     ax.legend(loc="lower right")
     fig.tight_layout()
     roc_out_path = REPO_ROOT / "model2_cbc_diff_roc_curve.png"
-    fig.savefig(roc_out_path, dpi=150)
+    fig.savefig(roc_out_path, dpi=150, bbox_inches="tight")
     print(f"\nROC curve saved to: {roc_out_path}")
 
     save_roc_data("Model 2 (+DIFF)", oob_fpr, oob_tpr, pooled["auc"][0],
@@ -486,7 +487,7 @@ def main():
     ax2.legend(loc="upper left")
     fig2.tight_layout()
     cal_out_path = REPO_ROOT / "model2_cbc_diff_calibration_curve.png"
-    fig2.savefig(cal_out_path, dpi=150)
+    fig2.savefig(cal_out_path, dpi=150, bbox_inches="tight")
     print(f"Calibration curve saved to: {cal_out_path}")
 
     save_manuscript_data(

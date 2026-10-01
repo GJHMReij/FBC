@@ -149,7 +149,7 @@ def main():
     ax.legend(loc="lower right")
     fig.tight_layout()
     roc_out_path = REPO_ROOT / "logreg_comparison_roc_curve.png"
-    fig.savefig(roc_out_path, dpi=150)
+    fig.savefig(roc_out_path, dpi=150, bbox_inches="tight")
     print(f"\nROC curve saved to: {roc_out_path}")
 
     obs_freq, pred_freq = calibration_curve(y, oof_pred, n_bins=10, strategy="quantile")
@@ -169,7 +169,7 @@ def main():
     ax2.legend(loc="upper left")
     fig2.tight_layout()
     cal_out_path = REPO_ROOT / "logreg_comparison_calibration_curve.png"
-    fig2.savefig(cal_out_path, dpi=150)
+    fig2.savefig(cal_out_path, dpi=150, bbox_inches="tight")
     print(f"Calibration curve saved to: {cal_out_path}")
 
 

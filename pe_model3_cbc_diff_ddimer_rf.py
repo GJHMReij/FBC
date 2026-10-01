@@ -311,7 +311,7 @@ def main():
     ax.legend(loc="lower right")
     fig.tight_layout()
     roc_out_path = REPO_ROOT / "model3_cbc_diff_ddimer_roc_curve.png"
-    fig.savefig(roc_out_path, dpi=150)
+    fig.savefig(roc_out_path, dpi=150, bbox_inches="tight")
     print(f"\nROC curve saved to: {roc_out_path}")
 
     save_roc_data("Model 3 (+D-dimer)", oob_fpr, oob_tpr, pooled["auc"][0],
@@ -340,7 +340,7 @@ def main():
     ax2.legend(loc="upper left")
     fig2.tight_layout()
     cal_out_path = REPO_ROOT / "model3_cbc_diff_ddimer_calibration_curve.png"
-    fig2.savefig(cal_out_path, dpi=150)
+    fig2.savefig(cal_out_path, dpi=150, bbox_inches="tight")
     print(f"Calibration curve saved to: {cal_out_path}")
 
     save_manuscript_data(
