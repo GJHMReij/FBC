@@ -11,7 +11,6 @@ from datetime import datetime
 FOLDER = r"C:\Users\Max.Reijers\Documents\FBC_pe_models"
 INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\CohortMLgeslacht.csv"
 OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\df_met_script8000.xlsx"
-N_IMPUTATIONS = "10"
 
 LOG_PATH = f"{FOLDER}\\logreg_comparison_run_log_{datetime.now():%Y%m%d_%H%M%S}.txt"
 
@@ -43,7 +42,6 @@ run_and_stream([
     sys.executable, "-u", "compare_logreg.py",
     "--input-csv", INPUT_CSV,
     "--outcome-correction", OUTCOME_CORRECTION,
-    "--n-imputations", N_IMPUTATIONS,
 ], cwd=FOLDER, log_path=LOG_PATH)
 
 print(f"\nFull run transcript saved to: {LOG_PATH}")

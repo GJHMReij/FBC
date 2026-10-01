@@ -1,16 +1,18 @@
 """
 Quick comparison baseline: simple logistic regression using Model 3's full
 feature set (147 features, including D-dimer), validated via fast 5-fold
-cross-validation per imputation -- NOT the full 500-resample bootstrap
-procedure used for the Random Forest models. This is deliberately a quicker,
-less rigorous check (a few minutes of modeling, though MICE itself still
-takes the same time as Model 3's MICE step), meant to give a first
-impression of how a traditional logistic regression stacks up against the
-Random Forest models, not a publication-grade result.
+cross-validation -- NOT the full 500-resample bootstrap procedure used for
+the Random Forest models, and NOT MICE-imputed: this uses complete-case
+analysis (drops any row missing any feature) for speed/simplicity. This is
+deliberately a quick, less rigorous check (runs in a couple of minutes,
+no MICE wait), meant to give a first impression of how a traditional
+logistic regression stacks up against the Random Forest models, not a
+publication-grade result -- and on a smaller, complete-case-only patient
+set than Model 3's (which keeps DIFF-missing patients via MICE).
 
-Reuses the exact same data-loading/cleaning/outcome-correction/MICE pipeline
-as pe_model3_cbc_diff_ddimer_rf.py so the comparison is apples-to-apples
-(same patients, same features, same imputations).
+Reuses the same data-loading/cleaning/outcome-correction pipeline as
+pe_model3_cbc_diff_ddimer_rf.py (same features) for a reasonable
+comparison, though the patient set differs (complete-case vs MICE-imputed).
 
 Run with the project venv:
     .venv/bin/python compare_logreg.py --input-csv /path/to/real_cohort.csv \
@@ -40,8 +42,7 @@ from pe_model1_cbc_rf import (
     read_dictionary, build_feature_channel_map,
 )
 from pe_model2_cbc_diff_rf import (
-    D_DIMER_ASSAY_COL, D_DIMER_ASSAY_MAP, D_DIMER_VALUE_COL, N_IMPUTATIONS,
-    build_imputation_frame, get_cbc_diff_features, run_mice,
+    D_DIMER_ASSAY_COL, D_DIMER_ASSAY_MAP, D_DIMER_VALUE_COL, get_cbc_diff_features,
 )
 
 
@@ -50,10 +51,6 @@ def parse_args():
     parser.add_argument(
         "--input-csv", type=Path, default=DEFAULT_INPUT_CSV,
         help="Path to the cohort CSV (defaults to the synthetic dummy dataset)",
-    )
-    parser.add_argument(
-        "--n-imputations", type=int, default=N_IMPUTATIONS,
-        help=f"Number of MICE imputation sets (default: {N_IMPUTATIONS}, matching Model 3)",
     )
     parser.add_argument(
         "--outcome-correction", type=Path, default=None,
@@ -100,73 +97,54 @@ def main():
     )
     print(f"\nFeature count (same as Model 3): {len(model3_features)}")
 
-    # Same core-covariate drop as Model 3 -- D-dimer is a required covariate
-    # here too, not imputed.
-    PROTECTED_COLS.update({D_DIMER_VALUE_COL, "D_dimer_assay_enc"})
-    core_cols = ["Geslacht_enc", AGE_COL, CREATININE_COL, D_DIMER_VALUE_COL, "D_dimer_assay_enc"]
-    complete_core_mask = df[core_cols].notna().all(axis=1) & y.notna()
-    n_dropped = (~complete_core_mask).sum()
-    print(f"Dropping {n_dropped} rows with missing core covariates or outcome "
-          f"({n_dropped / len(df) * 100:.1f}%)")
-    df = df.loc[complete_core_mask].reset_index(drop=True)
-    y = y.loc[complete_core_mask].reset_index(drop=True)
+    # Complete-case analysis: drop any row missing ANY of the 147 features
+    # (not just the core covariates) -- no MICE at all, for speed/simplicity.
+    # Loses patients whose DIFF panel wasn't measured (much more than
+    # Model 3's core-only drop), but needs no imputation step, so this is
+    # dramatically faster for a quick, indicative comparison.
+    complete_mask = df[model3_features].notna().all(axis=1) & y.notna()
+    n_dropped = (~complete_mask).sum()
+    print(f"Dropping {n_dropped} rows with ANY missing feature value or outcome "
+          f"(complete-case, no MICE) ({n_dropped / len(df) * 100:.1f}%)")
+    df = df.loc[complete_mask].reset_index(drop=True)
+    y = y.loc[complete_mask].reset_index(drop=True)
     print(f"N remaining: {len(df)} (events={y.sum()})")
 
-    imputation_frame = build_imputation_frame(df, y, model3_features)
-    print(f"\nRunning MICE ({args.n_imputations} imputations) -- this is the slow "
-          f"part, same cost as Model 3's MICE step...")
-    imputed_datasets = run_mice(imputation_frame, model3_features, args.n_imputations)
+    # Fit + validate once (no MICE, no pooling across imputations needed --
+    # there's only one, complete dataset).
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(df[model3_features])
 
-    # Per imputation: fit logistic regression, validate via fast 5-fold CV
-    # (out-of-fold predictions -- genuinely held-out, like the RF models'
-    # OOB predictions, just via a different, faster mechanism). No repeated
-    # bootstrap resampling here, so this is far quicker than Model 3's
-    # validation, at the cost of a less precise uncertainty estimate.
-    all_oof_preds = []
-    all_coefs = []
-    for m, X_m in enumerate(imputed_datasets):
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X_m[model3_features])
+    lr = LogisticRegression(
+        penalty="l2", C=1.0, max_iter=2000, class_weight="balanced", random_state=42,
+    )
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    oof_pred = cross_val_predict(lr, X_scaled, y, cv=cv, method="predict_proba", n_jobs=-1)[:, 1]
 
-        lr = LogisticRegression(
-            penalty="l2", C=1.0, max_iter=2000, class_weight="balanced", random_state=42,
-        )
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42 + m)
-        oof_pred = cross_val_predict(lr, X_scaled, y, cv=cv, method="predict_proba", n_jobs=-1)[:, 1]
-        all_oof_preds.append(oof_pred)
+    lr.fit(X_scaled, y)
+    all_coefs = pd.Series(lr.coef_[0], index=model3_features)
 
-        # Also fit on all data (for coefficients/feature ranking, imputation 1 only)
-        if m == 0:
-            lr.fit(X_scaled, y)
-            all_coefs = pd.Series(lr.coef_[0], index=model3_features)
+    auc = roc_auc_score(y, oof_pred)
+    slope, intercept = calibration_slope_intercept(y, oof_pred)
+    fpr, tpr, _ = roc_curve(y, oof_pred)
 
-        auc_m = roc_auc_score(y, oof_pred)
-        print(f"  Imputation {m + 1}/{args.n_imputations}: 5-fold CV AUC = {auc_m:.3f}")
+    print(f"\n{'=' * 60}\nLogistic regression results (complete-case, 5-fold CV)"
+          f"\n{'=' * 60}")
+    print(f"CV-AUC: {auc:.3f}")
+    print(f"Calibration slope={slope:.3f}, intercept={intercept:.3f}")
 
-    # Pool across imputations: simple average of the out-of-fold predictions
-    # (consistent with how the RF models' OOB predictions are pooled).
-    pooled_pred = np.mean(all_oof_preds, axis=0)
-    pooled_auc = roc_auc_score(y, pooled_pred)
-    pooled_slope, pooled_intercept = calibration_slope_intercept(y, pooled_pred)
-    fpr, tpr, _ = roc_curve(y, pooled_pred)
-
-    print(f"\n{'=' * 60}\nPooled logistic regression results "
-          f"({args.n_imputations} imputations, 5-fold CV each)\n{'=' * 60}")
-    print(f"Pooled CV-AUC: {pooled_auc:.3f}")
-    print(f"Pooled calibration slope={pooled_slope:.3f}, intercept={pooled_intercept:.3f}")
-
-    print("\nTop 15 coefficients by |magnitude| (imputation 1, standardized features):")
+    print("\nTop 15 coefficients by |magnitude| (standardized features):")
     print(all_coefs.reindex(all_coefs.abs().sort_values(ascending=False).index).head(15))
 
     fig, ax = plt.subplots(figsize=(6, 6))
-    ax.plot(fpr, tpr, label=f"Logistic regression, 5-fold CV (AUC={pooled_auc:.3f})",
+    ax.plot(fpr, tpr, label=f"Logistic regression, 5-fold CV (AUC={auc:.3f})",
             color="tab:green")
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Chance")
     ax.set_xlabel("1 - Specificity (False Positive Rate)")
     ax.set_ylabel("Sensitivity (True Positive Rate)")
     ax.set_title(
-        "Logistic regression (Model 3 features) - ROC curve\n"
-        f"Pooled 5-fold CV AUC={pooled_auc:.3f} ({args.n_imputations} imputations)"
+        "Logistic regression (Model 3 features, complete-case) - ROC curve\n"
+        f"5-fold CV AUC={auc:.3f} (n={len(df)}, no MICE)"
     )
     ax.legend(loc="lower right")
     fig.tight_layout()
@@ -174,10 +152,10 @@ def main():
     fig.savefig(roc_out_path, dpi=150)
     print(f"\nROC curve saved to: {roc_out_path}")
 
-    obs_freq, pred_freq = calibration_curve(y, pooled_pred, n_bins=10, strategy="quantile")
+    obs_freq, pred_freq = calibration_curve(y, oof_pred, n_bins=10, strategy="quantile")
     fig2, ax2 = plt.subplots(figsize=(6, 6))
     ax2.plot(pred_freq, obs_freq, marker="o",
-              label=f"Logistic regression (slope={pooled_slope:.3f}, intercept={pooled_intercept:.3f})",
+              label=f"Logistic regression (slope={slope:.3f}, intercept={intercept:.3f})",
               color="tab:green")
     ax2.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Perfect calibration")
     ax2.set_xlabel("Predicted probability")
@@ -185,8 +163,8 @@ def main():
     ax2.set_xlim(0, 1)
     ax2.set_ylim(0, 1)
     ax2.set_title(
-        "Logistic regression (Model 3 features) - Calibration plot\n"
-        f"Pooled slope={pooled_slope:.3f}, intercept={pooled_intercept:.3f}"
+        "Logistic regression (Model 3 features, complete-case) - Calibration plot\n"
+        f"slope={slope:.3f}, intercept={intercept:.3f} (n={len(df)}, no MICE)"
     )
     ax2.legend(loc="upper left")
     fig2.tight_layout()
