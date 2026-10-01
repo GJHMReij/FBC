@@ -42,8 +42,8 @@ from pe_model1_cbc_rf import (
     apply_outcome_correction, build_discrete_channel_map, build_feature_channel_map,
     bootstrap_optimism, calculate_correlation, calibration_slope_intercept,
     clean_data, EXTRA_CHANNELS, CBC_CHANNELS, fit_pipeline,
-    metrics_at_threshold, pearson_filter, read_dictionary, save_manuscript_data,
-    save_roc_data, sensitivity_threshold_metrics,
+    metrics_at_threshold, pearson_filter, read_dictionary, RESTRICTED_FEATURES,
+    save_manuscript_data, save_roc_data, sensitivity_threshold_metrics,
 )
 
 N_IMPUTATIONS = 10  # per analysis plan
@@ -76,6 +76,20 @@ D_DIMER_ASSAY_MAP = {"Siemens Innovance": 1.0, "VUmc Tinaquant": 0.0}
 def get_cbc_diff_features(feature_channel_map):
     features = []
     for feat, chmap in feature_channel_map.items():
+        if feat in RESTRICTED_FEATURES:
+            # These are forced to NaN for almost every row by zero_to_na()
+            # (per email communication 1-12-2025) -- real values only
+            # survive for the rare row with an unmapped Discrete value.
+            # Including them as candidate features is fragile: whether they
+            # pass the "at least one non-missing value" check depends on
+            # whether any of those rare rows happen to also survive
+            # whatever row-filtering a given model applies (e.g. Model 3's
+            # D-dimer-completeness filter) -- if none do, the column is
+            # 100% missing in that subset and crashes IterativeImputer
+            # (sklearn silently drops it, causing a shape mismatch
+            # downstream). Excluded here rather than relying on that
+            # fragile survival.
+            continue
         all_ch = set(chmap["YES"]) | set(chmap["OPTION"])
         if not all_ch:
             continue
