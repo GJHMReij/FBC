@@ -155,9 +155,10 @@ def main():
     imputed_datasets = run_mice(imputation_frame, model3_features, args.n_imputations)
 
     print("\nTuning hyperparameters once, on the first imputed dataset...")
+    print("Skipping correlation + Pearson-association filters (uniform with Model 1 as of "
+          "2026-10-01): using all candidate features")
     X0 = imputed_datasets[0]
-    selected0 = calculate_correlation(X0, model3_features, threshold=0.9, verbose=False)
-    selected0 = pearson_filter(X0, y, selected0, p_threshold=0.8, verbose=False)
+    selected0 = list(model3_features)
     scaler0 = StandardScaler()
     X0_scaled = scaler0.fit_transform(X0[selected0])
     base_model = RandomForestClassifier(
@@ -185,7 +186,7 @@ def main():
     fitted_imputation_models = []
     for m, X_m in enumerate(imputed_datasets):
         print(f"\n--- Imputation {m + 1}/{args.n_imputations} ---")
-        model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params, skip_correlation_filter=False, skip_pearson_filter=False)
+        model, scaler, selected = fit_pipeline(X_m, y, model3_features, rf_params, skip_correlation_filter=True, skip_pearson_filter=True)
         fitted_imputation_models.append({"model": model, "scaler": scaler, "features": selected})
         apparent_pred = model.predict_proba(scaler.transform(X_m[selected]))[:, 1]
         apparent_auc = roc_auc_score(y, apparent_pred)
@@ -194,7 +195,7 @@ def main():
 
         optimism, oob_pred_avg = bootstrap_optimism(
             X_m, y, model3_features, rf_params, n_boot=args.n_bootstrap, random_state=200 + m,
-            skip_correlation_filter=False, skip_pearson_filter=False,
+            skip_correlation_filter=True, skip_pearson_filter=True,
         )
         all_oob_preds.append(oob_pred_avg)
 
