@@ -139,6 +139,29 @@ def build_imputation_frame(df, y, model_features):
     aux["outcome"] = y.astype(float)
 
     imputation_frame = pd.concat([df[model_features], aux], axis=1)
+
+    # sklearn's IterativeImputer silently DROPS any column with zero
+    # observed (non-missing) values at fit time, returning an array with
+    # fewer columns than it was given -- with no indication of which ones
+    # were dropped. That caused a downstream
+    # "Shape of passed values is (n, k), indices imply (n, k+j)" crash when
+    # rebuilding the DataFrame in run_mice(). Catch it here instead, with a
+    # clear message, before it reaches IterativeImputer.
+    all_nan_cols = imputation_frame.columns[imputation_frame.isna().all()].tolist()
+    if all_nan_cols:
+        all_nan_model_features = [c for c in all_nan_cols if c in model_features]
+        if all_nan_model_features:
+            raise ValueError(
+                f"These model feature(s) are 100% missing in this cohort and cannot be "
+                f"imputed or used: {all_nan_model_features}. This likely means the column "
+                f"doesn't apply to this patient subset (e.g. after the core-covariate drop) "
+                f"-- investigate before proceeding, don't silently drop a real feature."
+            )
+        print(f"Imputation model: dropping {len(all_nan_cols)} auxiliary column(s) with zero "
+              f"observed values in this cohort (would otherwise be silently dropped by "
+              f"IterativeImputer, breaking column alignment downstream): {all_nan_cols}")
+        imputation_frame = imputation_frame.drop(columns=all_nan_cols)
+
     return imputation_frame
 
 
