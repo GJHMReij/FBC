@@ -544,6 +544,31 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     fig2.savefig(f"{pre}_calibration_curve.png", dpi=150, bbox_inches="tight")
     plt.close(fig2)
 
+    def per_1000(prefix):
+        prev = float(y_test.mean())
+        rows = {}
+        for t in SENS_TARGETS:
+            sens = pooled_test[f"{prefix}{t}_sensitivity"]["est"]
+            spec = pooled_test[f"{prefix}{t}_specificity"]["est"]
+            eff = pooled_test[f"{prefix}{t}_efficiency"]["est"]
+            npv = pooled_test[f"{prefix}{t}_npv"]["est"]
+            rows[f"{int(round(t * 100))}%"] = {
+                "PE per 1000 scans": round(1000 * prev),
+                "scans saved (no CTPA)": round(1000 * eff),
+                "of which without PE": round(1000 * spec * (1 - prev)),
+                "PE missed": round(1000 * prev * (1 - sens), 1),
+                "% of scans saved": f"{eff * 100:.1f}",
+                "NPV": f"{npv:.3f}",
+            }
+        return pd.DataFrame(rows).T
+
+    tbl_1000_a = per_1000("A")
+    tbl_1000_b = per_1000("B")
+    tbl_1000_a.to_csv(f"{pre}_per1000_from_training.csv")
+    tbl_1000_b.to_csv(f"{pre}_per1000_on_test.csv")
+    print("\nPer 1000 scans, threshold from training set:")
+    print(tbl_1000_a.to_string())
+
     importance.to_csv(f"{pre}_feature_importance.csv", header=["importance"])
     tbl_a.to_csv(f"{pre}_test_thresholds_from_training.csv")
     tbl_b.to_csv(f"{pre}_test_thresholds_on_test.csv")
@@ -612,6 +637,9 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                 ("Test set: sensitivity fixed on the test set", tbl_b,
                  "Threshold chosen on the test set itself so that sensitivity equals the target."),
                 ("Training set (apparent)", tbl_train, "Optimistic by construction."),
+                ("Scans saved and PE missed per 1000 scans (threshold from training set)", tbl_1000_a,
+                 "Scans saved = scans below the threshold (efficiency x 1000); PE missed = (1 - sensitivity) x PE per 1000."),
+                ("Scans saved and PE missed per 1000 scans (sensitivity fixed on test set)", tbl_1000_b, ""),
             ],
             "hospitals": ([["Hospital", "n", "PE %", "AUC", "Sens (95% target)", "NPV", "Efficiency"]] + [
                 [h, int((hosp_test == h).sum()), f"{y_test[hosp_test == h].mean() * 100:.1f}", line(v["auc"]),
