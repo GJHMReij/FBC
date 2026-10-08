@@ -115,6 +115,7 @@ def main():
     sex_map = {"Man": 1.0, "Vrouw": 0.0}
     df["Geslacht_enc"] = df[SEX_COL].map(sex_map)
     df["D_dimer_assay_enc"] = df[D_DIMER_ASSAY_COL].map(D_DIMER_ASSAY_MAP)
+    df[D_DIMER_VALUE_COL] = pd.to_numeric(df[D_DIMER_VALUE_COL], errors="coerce")
     y = (df[OUTCOME_COL] == "Ja").astype(int)
 
     model3_features = (

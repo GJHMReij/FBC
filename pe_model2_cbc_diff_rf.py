@@ -68,7 +68,7 @@ ORDER_DATE_COL = "OnderzoeksDatum"
 # even Model 1/2, which don't use D-dimer as an actual predictor. Defined
 # here (not in the Model 3 script) so Model 2's imputation model includes
 # them too; Model 3 imports these same constants rather than redefining them.
-D_DIMER_VALUE_COL = "D_dimeer_val"
+D_DIMER_VALUE_COL = "d_dimeer48H"  # D_dimeer_val restricted to a D-dimer measured within ~48 h of the scan
 D_DIMER_ASSAY_COL = "D_dimer_assay"
 D_DIMER_ASSAY_MAP = {"Siemens Innovance": 1.0, "VUmc Tinaquant": 0.0}
 
@@ -134,7 +134,7 @@ def build_imputation_frame(df, y, model_features):
 
     if D_DIMER_VALUE_COL not in model_features:
         if D_DIMER_VALUE_COL in df.columns and df[D_DIMER_VALUE_COL].notna().any():
-            aux[D_DIMER_VALUE_COL] = df[D_DIMER_VALUE_COL].astype(float)
+            aux[D_DIMER_VALUE_COL] = pd.to_numeric(df[D_DIMER_VALUE_COL], errors="coerce")
             print(f"Imputation model: including D-dimer level ({D_DIMER_VALUE_COL})")
         else:
             print(f"Imputation model: D-dimer level column '{D_DIMER_VALUE_COL}' not usable, skipping")
