@@ -14,7 +14,7 @@ def _ci(d):
 
 
 def _table_rows(tbl):
-    cols = [tbl.index.name or ""] + [str(c) for c in tbl.columns]
+    cols = [tbl.index.name or "Target sensitivity"] + [str(c) for c in tbl.columns]
     rows = [[str(i)] + [("" if pd.isna(v) else (f"{v:.3f}" if isinstance(v, float) else str(v)))
                         for v in r] for i, r in zip(tbl.index, tbl.values.tolist())]
     return cols, rows
