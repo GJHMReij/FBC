@@ -421,7 +421,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     print(f"\nGrid search: {n_combo} combinations x 5 folds (patient-grouped, AUC) "
           f"on training imputation set 1 ...")
     cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=args.seed)
-    search = GridSearchCV(RandomForestClassifier(class_weight="balanced", random_state=args.seed, n_jobs=1),
+    search = GridSearchCV(RandomForestClassifier(random_state=args.seed, n_jobs=1),
                           grid, cv=cv, scoring="roc_auc", n_jobs=-1, refit=False, verbose=0)
     with Heartbeat("GridSearchCV"):
         search.fit(train_sets[0][feats], y_train, groups=g_train)
@@ -432,7 +432,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     print(f"\nBuilding {args.n_imputations} random forests ...")
     forests, p_train, p_oob, p_test = [], [], [], []
     for m in range(args.n_imputations):
-        rf = RandomForestClassifier(**best, class_weight="balanced", oob_score=True,
+        rf = RandomForestClassifier(**best, oob_score=True,
                                     random_state=args.seed + m, n_jobs=-1)
         with Heartbeat(f"RF {m + 1}"):
             rf.fit(train_sets[m][feats], y_train)
