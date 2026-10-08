@@ -1,7 +1,11 @@
 """
 Convenience runner for Model 1 on the real MyDRE cohort -- pulls the latest
-code, then runs the model with the outcome correction applied. Edit the
-paths/settings below as needed, save, and press F5 (Run file) in Spyder.
+code, then runs the 80/20 temporal-split pipeline (pe_pipeline.py) for Model 1.
+Edit the settings below, save, and press F5 (Run file) in Spyder.
+
+QUICK = True does a fast smoke test (2 imputations, tiny grid, 20 bootstrap
+draws) -- use it first to check that everything runs and that the printed
+split numbers look right. Set QUICK = False for the real, full run.
 """
 import subprocess
 import sys
@@ -10,22 +14,13 @@ from datetime import datetime
 FOLDER = r"C:\Users\Max.Reijers\Documents\FBC_pe_models"
 INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\CohortMLgeslacht.csv"
 OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\df_met_script8000.xlsx"
-N_BOOTSTRAP = "500"  # final, definitive run
+QUICK = True
 
-# Full transcript of this run, timestamped so earlier runs' logs aren't
-# overwritten -- lets you come back to exactly what a past run printed
-# (missingness counts, feature counts, etc.), even after closing Spyder,
-# on top of the JSON/PNG summary files the model script itself always saves.
-LOG_PATH = f"{FOLDER}\\model1_run_log_{datetime.now():%Y%m%d_%H%M%S}.txt"
+LOG_PATH = f"{FOLDER}\\model1_pipeline_log_{datetime.now():%Y%m%d_%H%M%S}.txt"
 
 
 def run_and_stream(cmd, cwd, log_path=None):
-    """Run cmd and print its output line-by-line as it happens (via
-    Python's own print, which Spyder's console does capture and display --
-    unlike a plain subprocess.run(), whose inherited stdout can go
-    nowhere visible when Spyder itself has no attached console window).
-    If log_path is given, every line is also written there, so the full
-    transcript survives closing/clearing the console."""
+    """Run cmd and print its output line by line; also write it to log_path."""
     header = f"$ {' '.join(cmd)}"
     print(header)
     log_file = open(log_path, "a", encoding="utf-8") if log_path else None
@@ -48,16 +43,14 @@ def run_and_stream(cmd, cwd, log_path=None):
 
 run_and_stream(["git", "pull"], cwd=FOLDER)
 
-run_and_stream([
-    # -u: force the child Python process to run unbuffered, so its print()
-    # output is flushed immediately instead of sitting in an internal
-    # buffer (the default when stdout isn't a real terminal, as here) --
-    # without this, no output appears until the buffer fills or the
-    # process exits, even though it's running fine the whole time.
-    sys.executable, "-u", "pe_model1_cbc_rf.py",
+cmd = [
+    sys.executable, "-u", "pe_pipeline.py",
+    "--models", "1",
     "--input-csv", INPUT_CSV,
     "--outcome-correction", OUTCOME_CORRECTION,
-    "--n-bootstrap", N_BOOTSTRAP,
-], cwd=FOLDER, log_path=LOG_PATH)
+]
+if QUICK:
+    cmd.append("--quick")
+run_and_stream(cmd, cwd=FOLDER, log_path=LOG_PATH)
 
 print(f"\nFull run transcript saved to: {LOG_PATH}")
