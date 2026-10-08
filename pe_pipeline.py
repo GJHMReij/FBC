@@ -180,6 +180,12 @@ def load_and_prepare(args):
     else:
         print(f"WARNING: '{CLASS_COL}' not found -- no outpatient exclusion applied")
 
+    if args.require_ddimer or args.models == [3]:
+        has_dd = pd.to_numeric(df[D_DIMER_VALUE_COL], errors="coerce").notna()
+        print(f"Excluding {int((~has_dd).sum())} scans without a measured D-dimer "
+              f"({D_DIMER_VALUE_COL}) BEFORE the split; {int(has_dd.sum())} scans remain")
+        df = df.loc[has_dd].reset_index(drop=True)
+
     parsed, n_ok, fmt = parse_dates(df[DATE_COL])
     print(f"Scan date ({DATE_COL}): format {fmt}, {n_ok} of {len(df)} valid")
     if n_ok == 0 and args.fake_dates_for_testing:
@@ -401,7 +407,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     print(f"Training: {train_mask.sum()} scans ({y_train.sum()} PE, {y_train.mean() * 100:.1f}%)")
     print(f"Hold-out test: {test_mask.sum()} scans ({y_test.sum()} PE, {y_test.mean() * 100:.1f}%)")
 
-    tag = "pop_dd" if model_no == 3 else "pop_all"
+    tag = "pop_dd" if (model_no == 3 or args.require_ddimer) else "pop_all"
     frame = df[imputation_cols]
     sets = impute_sets(frame, train_mask, test_mask, args.n_imputations, args.mice_max_iter,
                        args.seed, out_dir / "cache", tag)
@@ -552,6 +558,64 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     joblib.dump({"label": label, "features": feats, "members": forests,
                  "thresholds_ensemble": thr_ens, "best_params": best,
                  "cutoff_date": str(cutoff.date())}, f"{pre}_ensemble.joblib")
+    # row-level predictions: lets later scripts draw all models in one figure
+    pd.concat([
+        pd.DataFrame({"set": "train", "y": y_train, "p_ensemble": p_ens_train}),
+        pd.DataFrame({"set": "test", "y": y_test, "p_ensemble": p_ens_test,
+                      "hospital": hosp_test if hosp_test is not None else np.nan}),
+    ], ignore_index=True).to_csv(f"{pre}_predictions.csv", index=False)
+
+    try:
+        from pe_report import build_report
+        hosp_counts = lambda m: (df.loc[m, HOSPITAL_COL].value_counts().to_dict()
+                                 if HOSPITAL_COL in df.columns else {})
+        info = {
+            "label": label,
+            "intro": ("Random Forest ensemble (mean of one forest per imputed data set), temporal "
+                      "80/20 split; hold-out test = most recent scans; Rubin's rules over the imputations."),
+            "split": [
+                f"Training: {int(train_mask.sum())} scans, {int(y_train.sum())} PE ({y_train.mean() * 100:.1f}%); hospitals {hosp_counts(train_mask)}",
+                f"Hold-out test: {int(test_mask.sum())} scans, {int(y_test.sum())} PE ({y_test.mean() * 100:.1f}%); hospitals {hosp_counts(test_mask)}",
+                f"Test patients' first scan on/after {cutoff.date()}; patients with scans in both periods are in the training set",
+                "Excluded: outpatient scans, scans without definitive outcome" + ("; scans without D-dimer" if model_no == 3 else ""),
+            ],
+            "settings": [
+                ("Number of features", len(feats)),
+                ("Imputations (training and test, separately)", args.n_imputations),
+                ("MICE iterations", args.mice_max_iter),
+                ("Best hyperparameters (grid search, 5-fold CV, AUC)", best),
+                ("Best cross-validated AUC", f"{float(search.best_score_):.3f}"),
+                ("Bootstrap draws (test / training)", f"{args.n_bootstrap} / {args.n_bootstrap_train}"),
+                ("Quick (smoke-test) mode", "YES - not final numbers" if args.quick else "no"),
+            ],
+            "test_metrics": [
+                ("AUC (test, pooled)", line(pooled_test["auc"])),
+                ("AUC (test, ensemble)", line(ens_test["auc"])),
+                ("AUC (training, apparent)", line(pooled_train["auc"])),
+                ("Brier score (test)", line(pooled_test["brier"])),
+                ("Calibration slope (test)", line(pooled_test["slope"])),
+                ("Calibration intercept (test)", line(pooled_test["intercept"])),
+            ],
+            "images": [("ROC curve", f"{pre}_roc_curve.png"),
+                       ("Calibration plot (hold-out test set)", f"{pre}_calibration_curve.png")],
+            "tables": [
+                ("Test set: threshold chosen on the training set", tbl_a,
+                 "Threshold for the target sensitivity determined on training OOB predictions, applied unchanged to the test set."),
+                ("Test set: sensitivity fixed on the test set", tbl_b,
+                 "Threshold chosen on the test set itself so that sensitivity equals the target."),
+                ("Training set (apparent)", tbl_train, "Optimistic by construction."),
+            ],
+            "hospitals": ([["Hospital", "n", "PE %", "AUC", "Sens (95% target)", "NPV", "Efficiency"]] + [
+                [h, int((hosp_test == h).sum()), f"{y_test[hosp_test == h].mean() * 100:.1f}", line(v["auc"]),
+                 f"{v['A0.95_sensitivity']['est']:.3f}", f"{v['A0.95_npv']['est']:.3f}",
+                 f"{v['A0.95_efficiency']['est']:.3f}"] for h, v in per_hospital.items()]) if per_hospital else None,
+            "importance": importance,
+        }
+        report_path = build_report(pre, info)
+        print(f"Word report: {report_path}")
+    except Exception as exc:  # the report must never break a finished run
+        print(f"WARNING: could not write the Word report: {exc!r}")
+
     print(f"\nOutputs written to {out_dir} (prefix model{model_no}_)")
 
 
@@ -571,6 +635,8 @@ def parse_args():
     p.add_argument("--n-bootstrap-train", type=int, default=100)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out-dir", type=Path, default=REPO_ROOT / "results_temporal")
+    p.add_argument("--require-ddimer", action="store_true",
+                   help="exclude scans without a measured D-dimer before the split (automatic when running only Model 3)")
     p.add_argument("--quick", action="store_true",
                    help="Fast smoke test: 2 imputations, 2 MICE iterations, tiny grid, 20 bootstrap draws")
     p.add_argument("--fake-dates-for-testing", action="store_true",
