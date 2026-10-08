@@ -521,17 +521,25 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     plt.close(fig)
 
     obs, pred = calibration_curve(y_test, p_ens_test, n_bins=10, strategy="quantile")
-    fig2, ax2 = plt.subplots(figsize=(6, 6))
-    ax2.plot(pred, obs, marker="o", color="tab:orange",
-             label=f"Hold-out test (slope={ens_test['slope']['est']:.3f}, "
-                   f"intercept={ens_test['intercept']['est']:.3f})")
+    # continuous calibration line over 0-1: observed = expit(intercept + slope * logit(p))
+    xs = np.linspace(0.001, 0.999, 200)
+    cal_line = 1 / (1 + np.exp(-(ens_test["intercept"]["est"]
+                                 + ens_test["slope"]["est"] * np.log(xs / (1 - xs)))))
+    fig2, (ax2, axh) = plt.subplots(2, 1, figsize=(6, 7.5), sharex=True,
+                                    gridspec_kw={"height_ratios": [4, 1]})
     ax2.plot([0, 1], [0, 1], "--", color="grey", label="Perfect calibration")
+    ax2.plot(xs, cal_line, color="tab:orange",
+             label=f"Calibration line (slope={ens_test['slope']['est']:.3f}, "
+                   f"intercept={ens_test['intercept']['est']:.3f})")
+    ax2.plot(pred, obs, marker="o", linestyle="none", color="tab:blue", label="Deciles of predicted risk")
     ax2.set_xlim(0, 1)
     ax2.set_ylim(0, 1)
-    ax2.set_xlabel("Predicted probability")
     ax2.set_ylabel("Observed frequency")
     ax2.set_title(f"{label} - Calibration plot (hold-out test set)")
     ax2.legend(loc="upper left")
+    axh.hist(p_ens_test, bins=np.linspace(0, 1, 51), color="tab:grey")
+    axh.set_xlabel("Predicted probability")
+    axh.set_ylabel("Scans")
     fig2.tight_layout()
     fig2.savefig(f"{pre}_calibration_curve.png", dpi=150, bbox_inches="tight")
     plt.close(fig2)
