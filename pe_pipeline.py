@@ -453,6 +453,25 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
         print(f"  RF {m + 1}/{args.n_imputations}: training AUC {roc_auc_score(y_train, p_train[-1]):.3f}, "
               f"test AUC {roc_auc_score(y_test, p_test[-1]):.3f}", flush=True)
 
+    # logistic recalibration, fitted on the training set's cross-validated predictions only
+    raw_slope, raw_int = calibration_slope_intercept(y_test, np.mean(p_test, axis=0))
+    cal_slope = cal_int = None
+    if not args.no_recalibration:
+        cal_slope, cal_int = calibration_slope_intercept(y_train, np.mean(p_oob, axis=0))
+
+        def recal(p):
+            lp = np.log(np.clip(p, 1e-6, 1 - 1e-6) / (1 - np.clip(p, 1e-6, 1 - 1e-6)))
+            return 1 / (1 + np.exp(-(cal_int + cal_slope * lp)))
+
+        p_train = [recal(p) for p in p_train]
+        p_oob = [recal(p) for p in p_oob]
+        p_test = [recal(p) for p in p_test]
+        print(f"\nRecalibration (fitted on training CV predictions): "
+              f"slope {cal_slope:.3f}, intercept {cal_int:.3f} "
+              f"(raw test calibration before: slope {raw_slope:.3f}, intercept {raw_int:.3f})")
+    else:
+        print("\nNo recalibration (--no-recalibration)")
+
     # thresholds for the fixed sensitivities, from the training set (5-fold cross-validated predictions)
     thr_train_m = [{t: thr_for_sens(y_train, o, t) for t in SENS_TARGETS} for o in p_oob]
     p_ens_train = np.mean(p_train, axis=0)
@@ -589,6 +608,8 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
         "test_pooled": pooled_test, "train_pooled": pooled_train,
         "ensemble_test": ens_test, "ensemble_thresholds": {str(k): float(v) for k, v in thr_ens.items()},
         "per_hospital": per_hospital,
+        "recalibration": {"slope": cal_slope, "intercept": cal_int,
+                          "raw_test_slope": float(raw_slope), "raw_test_intercept": float(raw_int)},
     }
     with open(f"{pre}_results.json", "w") as f:
         json.dump(results, f, indent=1, default=float)
@@ -598,6 +619,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                          list(importance.head(10).items()), f"{pre}_manuscript_data.json")
     joblib.dump({"label": label, "features": feats, "members": forests,
                  "thresholds_ensemble": thr_ens, "best_params": best,
+                 "recalibration": {"slope": cal_slope, "intercept": cal_int},
                  "cutoff_date": str(cutoff.date())}, f"{pre}_ensemble.joblib")
     # row-level predictions: lets later scripts draw all models in one figure
     pd.concat([
@@ -626,6 +648,10 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                 ("MICE iterations", args.mice_max_iter),
                 ("Best hyperparameters (grid search, 5-fold CV, AUC)", best),
                 ("Best cross-validated AUC", f"{float(search.best_score_):.3f}"),
+                ("Recalibration (logistic, fitted on training CV predictions)",
+                 "none" if cal_slope is None else
+                 f"slope {cal_slope:.3f}, intercept {cal_int:.3f}; test calibration before: "
+                 f"slope {raw_slope:.3f}, intercept {raw_int:.3f}"),
                 ("Bootstrap draws (test / training)", f"{args.n_bootstrap} / {args.n_bootstrap_train}"),
                 ("Quick (smoke-test) mode", "YES - not final numbers" if args.quick else "no"),
             ],
@@ -679,6 +705,8 @@ def parse_args():
     p.add_argument("--n-bootstrap-train", type=int, default=100)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out-dir", type=Path, default=REPO_ROOT / "results_temporal")
+    p.add_argument("--no-recalibration", action="store_true",
+                   help="skip the logistic recalibration of the predicted probabilities")
     p.add_argument("--require-ddimer", action="store_true",
                    help="exclude scans without a measured D-dimer before the split (automatic when running only Model 3)")
     p.add_argument("--quick", action="store_true",
