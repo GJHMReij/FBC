@@ -65,7 +65,7 @@ DATE_COL = "Startmoment_Beeldvorming"
 PATIENT_COL = "Pseudo_id"
 CLASS_COL = "Patientklasse"
 EXCLUDE_CLASS_PATTERN = r"^\s*poliklinisch\s*$"
-SENS_TARGETS = [0.95, 0.97, 0.98, 0.99]
+SENS_TARGETS = [0.97, 0.98, 0.99]
 METRIC_KEYS = ["sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"]
 DATE_FORMATS = [
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d-%m-%Y %H:%M:%S",
@@ -432,12 +432,17 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     print(f"\nBuilding {args.n_imputations} random forests ...")
     forests, p_train, p_oob, p_test = [], [], [], []
     for m in range(args.n_imputations):
-        rf = RandomForestClassifier(**best, oob_score=True,
-                                    random_state=args.seed + m, n_jobs=-1)
+        rf = RandomForestClassifier(**best, random_state=args.seed + m, n_jobs=-1)
         with Heartbeat(f"RF {m + 1}"):
             rf.fit(train_sets[m][feats], y_train)
-        oob = rf.oob_decision_function_[:, 1]
-        oob = np.where(np.isnan(oob), np.nanmean(oob), oob)
+        # cross-validated (out-of-fold) predictions on the training set, from forests of the
+        # same size as the final model; thresholds are determined on these
+        oob = np.full(len(y_train), np.nan)
+        with Heartbeat(f"CV predictions {m + 1}"):
+            for tr_idx, va_idx in cv.split(train_sets[m][feats], y_train, groups=g_train):
+                rf_cv = RandomForestClassifier(**best, random_state=args.seed + m, n_jobs=-1)
+                rf_cv.fit(train_sets[m][feats].iloc[tr_idx], y_train[tr_idx])
+                oob[va_idx] = rf_cv.predict_proba(train_sets[m][feats].iloc[va_idx])[:, 1]
         forests.append(rf)
         p_train.append(rf.predict_proba(train_sets[m][feats])[:, 1])
         p_oob.append(oob)
@@ -445,7 +450,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
         print(f"  RF {m + 1}/{args.n_imputations}: training AUC {roc_auc_score(y_train, p_train[-1]):.3f}, "
               f"test AUC {roc_auc_score(y_test, p_test[-1]):.3f}", flush=True)
 
-    # thresholds for the fixed sensitivities, from the training set (OOB predictions)
+    # thresholds for the fixed sensitivities, from the training set (5-fold cross-validated predictions)
     thr_train_m = [{t: thr_for_sens(y_train, o, t) for t in SENS_TARGETS} for o in p_oob]
     p_ens_train = np.mean(p_train, axis=0)
     p_ens_oob = np.mean(p_oob, axis=0)
@@ -468,7 +473,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     for k, name in [("auc", "AUC"), ("brier", "Brier"), ("slope", "Calibration slope"),
                     ("intercept", "Calibration intercept")]:
         print(f"{name}: {line(pooled_test[k])}")
-    print("\nOperating points A: threshold from TRAINING set (OOB), applied to the test set")
+    print("\nOperating points A: threshold from TRAINING set (cross-validated), applied to the test set")
     tbl_a = pooled_table(pooled_test, "A")
     print(tbl_a.to_string())
     print("\nOperating points B: sensitivity fixed on the test set itself")
@@ -493,8 +498,8 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
             per_hospital[str(h)] = sub
             print(f"  {h}: n={int(mk.sum())}, PE={y_test[mk].mean() * 100:.1f}%, "
                   f"AUC {line(sub['auc'])}, "
-                  f"95%-target sens {sub['A0.95_sensitivity']['est']:.3f}, "
-                  f"NPV {sub['A0.95_npv']['est']:.3f}, eff {sub['A0.95_efficiency']['est']:.3f}")
+                  f"97%-target sens {sub['A0.97_sensitivity']['est']:.3f}, "
+                  f"NPV {sub['A0.97_npv']['est']:.3f}, eff {sub['A0.97_efficiency']['est']:.3f}")
 
     importance = pd.Series(np.mean([rf.feature_importances_ for rf in forests], axis=0),
                            index=feats).sort_values(ascending=False)
@@ -585,7 +590,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     with open(f"{pre}_results.json", "w") as f:
         json.dump(results, f, indent=1, default=float)
     save_roc_data(label, fpr_te, tpr_te, pooled_test["auc"]["est"], f"{pre}_roc_data.json")
-    m95 = {k: pooled_test[f"A0.95_{k}"]["est"] for k in ("sensitivity", "specificity", "accuracy", "f1")}
+    m95 = {k: pooled_test[f"A0.97_{k}"]["est"] for k in ("sensitivity", "specificity", "accuracy", "f1")}
     save_manuscript_data(label, pooled_test["auc"]["est"], pooled_test["brier"]["est"], m95,
                          list(importance.head(10).items()), f"{pre}_manuscript_data.json")
     joblib.dump({"label": label, "features": feats, "members": forests,
@@ -633,7 +638,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                        ("Calibration plot (hold-out test set)", f"{pre}_calibration_curve.png")],
             "tables": [
                 ("Test set: threshold chosen on the training set", tbl_a,
-                 "Threshold for the target sensitivity determined on training OOB predictions, applied unchanged to the test set."),
+                 "Threshold for the target sensitivity determined on training cross-validated predictions, applied unchanged to the test set."),
                 ("Test set: sensitivity fixed on the test set", tbl_b,
                  "Threshold chosen on the test set itself so that sensitivity equals the target."),
                 ("Training set (apparent)", tbl_train, "Optimistic by construction."),
@@ -641,10 +646,10 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                  "Scans saved = scans below the threshold (efficiency x 1000); PE missed = (1 - sensitivity) x PE per 1000."),
                 ("Scans saved and PE missed per 1000 scans (sensitivity fixed on test set)", tbl_1000_b, ""),
             ],
-            "hospitals": ([["Hospital", "n", "PE %", "AUC", "Sens (95% target)", "NPV", "Efficiency"]] + [
+            "hospitals": ([["Hospital", "n", "PE %", "AUC", "Sens (97% target)", "NPV", "Efficiency"]] + [
                 [h, int((hosp_test == h).sum()), f"{y_test[hosp_test == h].mean() * 100:.1f}", line(v["auc"]),
-                 f"{v['A0.95_sensitivity']['est']:.3f}", f"{v['A0.95_npv']['est']:.3f}",
-                 f"{v['A0.95_efficiency']['est']:.3f}"] for h, v in per_hospital.items()]) if per_hospital else None,
+                 f"{v['A0.97_sensitivity']['est']:.3f}", f"{v['A0.97_npv']['est']:.3f}",
+                 f"{v['A0.97_efficiency']['est']:.3f}"] for h, v in per_hospital.items()]) if per_hospital else None,
             "importance": importance,
         }
         report_path = build_report(pre, info)
