@@ -258,7 +258,10 @@ def impute_sets(frame, train_mask, test_mask, n_imputations, max_iter, seed, cac
     cache_path = cache_dir / f"imputed_{tag}_{key}.joblib"
     if cache_path.exists():
         print(f"Loading cached imputation sets: {cache_path.name}")
-        return joblib.load(cache_path)
+        try:
+            return joblib.load(cache_path)
+        except Exception as exc:  # e.g. cache written by another pandas/sklearn version
+            print(f"WARNING: cache could not be read ({exc!r}); imputing again")
 
     train_frame = frame.loc[train_mask]
     test_frame = frame.loc[test_mask].copy()
