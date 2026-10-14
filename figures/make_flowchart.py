@@ -1,4 +1,5 @@
 """Writes flowchart_selection.svg (selection of scans and data split). Edit the numbers in N and re-run."""
+import textwrap
 from xml.sax.saxutils import escape
 
 N = {
@@ -39,10 +40,9 @@ def line(x1, y1, x2, y2, arrow=False):
 cx, BH, STEP = 290, 52, 100
 rows = [
     (["CT scans performed due to suspected PE", f"n = {N['suspected']}"], None),
-    (["Scans included", f"n = {N['included']} ({N['patients']} unique patients)"],
-     ["Excluded", f"scans < 1 month after previous scan (n = {N['within_month']})"]),
     (["CTPA scans in the cohort", f"n = {N['cohort']}"],
-     ["Excluded", f"outside the study time frame (n = {N['timeframe']})"]),
+     ["Excluded", f"scans < 1 month after previous scan (n = {N['within_month']})",
+      f"outside the study time frame (n = {N['timeframe']})"]),
     (["Inpatient and emergency scans", f"n = {N['inpat']}"],
      ["Excluded", f"outpatient scans (n = {N['outpat']})"]),
     (["Scans with an assessable CTPA", f"n = {N['assessable']}"],
@@ -56,7 +56,9 @@ for i, (main, excl) in enumerate(rows):
     if i > 0:
         line(cx, y - STEP + BH, cx, y, True)
         mid = y - (STEP - BH) / 2
-        box(520, mid - 28, 270, 56, excl, LIGHT)
+        wrapped = [excl[0]] + [w for t in excl[1:] for w in textwrap.wrap(t, 34)]
+        h = max(56, 18 * len(wrapped) + 20)
+        box(520, mid - h / 2, 270, h, wrapped, LIGHT)
         line(cx, mid, 520, mid, True)
 
 last = 20 + (len(rows) - 1) * STEP + BH          # bottom of the analysis population box
