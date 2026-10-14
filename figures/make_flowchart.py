@@ -17,7 +17,7 @@ def pe_text(model, part):
     return f"{N[part + model + '_pe']} PE ({100 * pe / n:.1f}%)"
 
 
-W, H = 800, 1100
+W, H = 1080, 1050
 GREEN, DARK, LIGHT, ARROW = "#54AA77", "#2F7D55", "#FFFFFF", "#2F5D45"
 out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
        'font-family="Arial, Helvetica, sans-serif" font-size="14">',
@@ -66,17 +66,17 @@ for i, (main, excl) in enumerate(rows):
         line(cx, mid, 520, mid, True)
 
 last = 20 + (len(rows) - 1) * STEP + BH          # bottom of the analysis population box
-split_y, row5 = last + 38, last + 78
+split_y, row5 = last + 38, last + 98
 line(cx, last, cx, split_y)
 line(200, split_y, 600, split_y)
-row5b = row5 + 96                      # Models 1/2 and Model 3 boxes share this row
-line(200, split_y, 200, row5b, True)
+line(200, split_y, 200, row5, True)
 line(600, split_y, 600, row5, True)
-box(420, row5, 360, 56, ["Excluded", f"D-dimer missing (n = {N['m3_nodd']})"], LIGHT)
-line(600, row5 + 56, 600, row5b, True)
-box(20, row5b, 360, 80, ["Models 1 and 2", "all scans in the analysis population", f"n = {N['pop']}"])
-box(420, row5b, 360, 80, ["Model 3", "scans with a measured D-dimer", f"n = {N['m3_pop']}"])
-b0 = row5b + 80
+mid3 = split_y + (row5 - split_y) / 2
+box(800, mid3 - 28, 260, 56, ["Excluded", f"D-dimer missing (n = {N['m3_nodd']})"], LIGHT)
+line(600, mid3, 800, mid3, True)
+box(20, row5, 360, 80, ["Models 1 and 2", "all scans in the analysis population", f"n = {N['pop']}"])
+box(420, row5, 360, 80, ["Model 3", "scans with a measured D-dimer", f"n = {N['m3_pop']}"])
+b0 = row5 + 80
 sp, row6 = b0 + 35, b0 + 70
 for cxx, a, b, tr in [(200, 105, 295, "12"), (600, 505, 695, "3")]:
     line(cxx, b0, cxx, sp)
