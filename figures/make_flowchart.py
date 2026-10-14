@@ -3,7 +3,7 @@ import textwrap
 from xml.sax.saxutils import escape
 
 N = {
-    "suspected": "[ ]", "excluded_top": "512", "cohort": "7,690",
+    "suspected": "8,202", "excluded_top": "512", "cohort": "7,690",
     "nonass": "6", "assessable": "7,684", "missing": "26", "pop": "7,658",
     "m3_nodd": "2,910", "m3_pop": "4,748",
     "tr12": "6,126", "tr12_pe": "1,109", "te12": "1,532", "te12_pe": "270",
