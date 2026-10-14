@@ -159,16 +159,19 @@ def load_and_prepare(args):
     df = pd.read_csv(args.input_csv, low_memory=False)
     df.columns = df.columns.str.strip()
     print(f"Shape: {df.shape}")
+    sel = {"n_read": len(df)}
 
     if args.outcome_correction is not None:
         print(f"\nApplying outcome correction from {args.outcome_correction} ...")
         df = apply_outcome_correction(df, args.outcome_correction)
     df = df.reset_index(drop=True)
+    sel["n_after_outcome_correction"] = len(df)
 
     outcome_ok = df[OUTCOME_COL].isin(["Ja", "Nee"])
     if (~outcome_ok).any():
         print(f"Dropping {int((~outcome_ok).sum())} scans without a Ja/Nee outcome")
         df = df.loc[outcome_ok].reset_index(drop=True)
+    sel["n_after_outcome"] = len(df)
     print(f"Scans after outcome handling: {len(df)} "
           f"({int((df[OUTCOME_COL] == 'Ja').sum())} PE, "
           f"{(df[OUTCOME_COL] == 'Ja').mean() * 100:.1f}%)")
@@ -176,6 +179,7 @@ def load_and_prepare(args):
     if CLASS_COL in df.columns:
         poli = df[CLASS_COL].astype(str).str.match(EXCLUDE_CLASS_PATTERN, case=False)
         print(f"Excluding {int(poli.sum())} outpatient scans ({CLASS_COL} = Poliklinisch)")
+        sel["n_outpatient"] = int(poli.sum())
         df = df.loc[~poli].reset_index(drop=True)
     else:
         print(f"WARNING: '{CLASS_COL}' not found -- no outpatient exclusion applied")
@@ -184,6 +188,7 @@ def load_and_prepare(args):
         has_dd = pd.to_numeric(df[D_DIMER_VALUE_COL], errors="coerce").notna()
         print(f"Excluding {int((~has_dd).sum())} scans without a measured D-dimer "
               f"({D_DIMER_VALUE_COL}) BEFORE the split; {int(has_dd.sum())} scans remain")
+        sel["n_no_ddimer"] = int((~has_dd).sum())
         df = df.loc[has_dd].reset_index(drop=True)
 
     parsed, n_ok, fmt = parse_dates(df[DATE_COL])
@@ -212,6 +217,8 @@ def load_and_prepare(args):
     if bad.any():
         print(f"Dropping {int(bad.sum())} scans with missing/unknown sex or age")
         df = df.loc[~bad].reset_index(drop=True)
+    sel["n_bad_date"] = int(bad_date.sum())
+    sel["n_bad_sex_age"] = int(bad.sum())
 
     # data cleaning (zero -> missing per data dictionary, drop excluded variables)
     feature_channel_map = build_feature_channel_map(read_dictionary())
@@ -243,6 +250,8 @@ def load_and_prepare(args):
     if all_nan:
         raise ValueError(f"Columns 100% missing, cannot be used/imputed: {all_nan}")
     y = (df[OUTCOME_COL] == "Ja").astype(int)
+    sel["n_final"] = len(df)
+    df.attrs["selection"] = sel
     return df, y, features, imputation_cols
 
 
