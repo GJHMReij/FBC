@@ -7,6 +7,7 @@ Run in Spyder on MyDRE with F5, then copy-paste the printed block.
 """
 import argparse
 import io
+import json
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -47,15 +48,48 @@ def numbers(models, require_ddimer):
     return out
 
 
-print("=" * 60)
-print("MODELS 1 AND 2 (all scans)")
-print("=" * 60)
-for k, v in numbers([1], False).items():
-    print(f"{k}: {v}")
-print()
-print("=" * 60)
-print("MODEL 3 (scans without D-dimer excluded before the split)")
-print("=" * 60)
-for k, v in numbers([3], True).items():
-    print(f"{k}: {v}")
+res12 = numbers([1], False)
+res3 = numbers([3], True)
+
+for title, res in [("MODELS 1 AND 2 (all scans)", res12),
+                   ("MODEL 3 (scans without D-dimer excluded before the split)", res3)]:
+    print("=" * 60)
+    print(title)
+    print("=" * 60)
+    for k, v in res.items():
+        print(f"{k}: {v}")
+    print()
+
+# ---- document with the same numbers (opens in Word; HTML if python-docx is missing)
+out_dir = Path(pp.REPO_ROOT) / "results_temporal"
+out_dir.mkdir(parents=True, exist_ok=True)
+with open(out_dir / "flowchart_numbers.json", "w") as f:
+    json.dump({"models_1_2": res12, "model_3": res3}, f, indent=1, default=str)
+
+sections = [("Models 1 and 2 (all scans)", res12),
+            ("Model 3 (scans without D-dimer excluded before the split)", res3)]
+try:
+    import docx
+    doc = docx.Document()
+    doc.add_heading("Numbers for the selection flowchart", level=0)
+    for title, res in sections:
+        doc.add_heading(title, level=1)
+        t = doc.add_table(rows=1, cols=2)
+        t.style = "Light Grid Accent 1"
+        t.rows[0].cells[0].text, t.rows[0].cells[1].text = "Item", "Value"
+        for k, v in res.items():
+            cells = t.add_row().cells
+            cells[0].text, cells[1].text = str(k), str(v)
+    path = out_dir / "flowchart_numbers.docx"
+    doc.save(str(path))
+except ImportError:
+    html = ["<html><head><meta charset='utf-8'></head><body><h1>Numbers for the selection flowchart</h1>"]
+    for title, res in sections:
+        html.append(f"<h2>{title}</h2><table border=1>")
+        html += [f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in res.items()]
+        html.append("</table>")
+    html.append("</body></html>")
+    path = out_dir / "flowchart_numbers.html"
+    path.write_text("\n".join(html), encoding="utf-8")
+print(f"Document written: {path}")
 print("\nCopy everything above and paste it in the chat.")
