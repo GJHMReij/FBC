@@ -1,12 +1,11 @@
 """Writes flowchart_selection.svg (patient/scan selection). Edit the numbers in N below and re-run."""
 N = {
-    "all": "8,258", "assessable": "8,250 (1,438 PE)", "nonass": "8", "outpat": "566",
-    "inpat": "7,684", "missing": "26", "pop": "7,658",
+    "cohort": "7,690", "nonass": "6", "assessable": "7,684", "missing": "26", "pop": "7,658",
     "m3_nodd": "2,910", "m3_pop": "4,748",
     "tr12": "6,126", "tr12_pe": "1,109", "te12": "1,532", "te12_pe": "270",
     "tr3": "3,798", "tr3_pe": "640", "te3": "950", "te3_pe": "164",
 }
-W, H = 800, 860
+W, H = 800, 740
 out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
        'font-family="Arial, Helvetica, sans-serif" font-size="14">',
        '<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
@@ -36,36 +35,32 @@ def line(x1, y1, x2, y2, arrow=False):
 
 RED = LIGHT
 cx = 290
-box(110, 20, 360, 56, ["CTPA scans in the cohort", f"n = {N['all']}"])
+box(110, 20, 360, 56, ["CTPA scans in the cohort", f"n = {N['cohort']}"])
 line(cx, 76, cx, 130, True)
 box(520, 75, 260, 56, ["Excluded", f"{N['nonass']} non-assessable CTPA"], RED)
 line(cx, 103, 520, 103, True)
 box(110, 130, 360, 56, ["Scans with an assessable CTPA", f"n = {N['assessable']}"])
 line(cx, 186, cx, 240, True)
-box(520, 185, 260, 56, ["Excluded", f"{N['outpat']} outpatient scans"], RED)
+box(520, 185, 260, 56, ["Excluded", f"missing date, sex or age (n = {N['missing']})"], RED)
 line(cx, 213, 520, 213, True)
-box(110, 240, 360, 56, ["Inpatient and emergency scans", f"n = {N['inpat']}"])
-line(cx, 296, cx, 350, True)
-box(520, 295, 260, 56, ["Excluded", f"missing date, sex or age (n = {N['missing']})"], RED)
-line(cx, 323, 520, 323, True)
-box(110, 350, 360, 56, ["Analysis population", f"n = {N['pop']}"])
-line(cx, 406, cx, 440)
-line(200, 440, 600, 440)
-line(200, 440, 200, 480, True)
-line(600, 440, 600, 480, True)
-box(20, 480, 360, 80, ["Models 1 and 2", "all scans in the analysis population", f"n = {N['pop']}"])
-box(420, 480, 360, 80, ["Model 3", f"excluded: no measured D-dimer (n = {N['m3_nodd']})",
+box(110, 240, 360, 56, ["Analysis population", f"n = {N['pop']}"])
+line(cx, 296, cx, 330)
+line(200, 330, 600, 330)
+line(200, 330, 200, 370, True)
+line(600, 330, 600, 370, True)
+box(20, 370, 360, 80, ["Models 1 and 2", "all scans in the analysis population", f"n = {N['pop']}"])
+box(420, 370, 360, 80, ["Model 3", f"excluded: no measured D-dimer (n = {N['m3_nodd']})",
                         f"n = {N['m3_pop']}"])
 for cxx, a, b, tr, te in [(200, 105, 295, "12", "12"), (600, 505, 695, "3", "3")]:
-    line(cxx, 560, cxx, 595)
-    line(a, 595, b, 595)
-    line(a, 595, a, 630, True)
-    line(b, 595, b, 630, True)
-    box(a - 85, 630, 170, 90, ["Training set", f"n = {N['tr' + tr]} (80%)", f"{N['tr' + tr + '_pe']} PE"],
+    line(cxx, 450, cxx, 485)
+    line(a, 485, b, 485)
+    line(a, 485, a, 520, True)
+    line(b, 485, b, 520, True)
+    box(a - 85, 520, 170, 90, ["Training set", f"n = {N['tr' + tr]} (80%)", f"{N['tr' + tr + '_pe']} PE"],
         fill=DARK)
-    box(b - 85, 630, 170, 90, ["Hold-out test set", f"n = {N['te' + te]} (20%)", f"{N['te' + te + '_pe']} PE"],
+    box(b - 85, 520, 170, 90, ["Hold-out test set", f"n = {N['te' + te]} (20%)", f"{N['te' + te + '_pe']} PE"],
         fill=GREEN)
-out.append(f'<text x="{W / 2}" y="760" text-anchor="middle" font-size="12" fill="#2F5D45">'
+out.append(f'<text x="{W / 2}" y="650" text-anchor="middle" font-size="12" fill="#2F5D45">'
            'Patients with scans in both periods (n = 72 for Models 1 and 2; n = 45 for Model 3) '
            'are allocated entirely to the training set.</text>')
 out.append("</g></svg>")
