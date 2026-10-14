@@ -3,8 +3,7 @@ import textwrap
 from xml.sax.saxutils import escape
 
 N = {
-    "suspected": "8,770", "within_month": "492", "included": "8,278", "patients": "7,668",
-    "timeframe": "20", "cohort": "8,258", "outpat": "568", "inpat": "7,690",
+    "suspected": "[ ]", "within_month": "[ ]", "timeframe": "[ ]", "cohort": "7,690",
     "nonass": "6", "assessable": "7,684", "missing": "26", "pop": "7,658",
     "m3_nodd": "2,910", "m3_pop": "4,748",
     "tr12": "6,126", "tr12_pe": "1,109", "te12": "1,532", "te12_pe": "270",
@@ -43,8 +42,6 @@ rows = [
     (["CTPA scans in the cohort", f"n = {N['cohort']}"],
      ["Excluded", f"scans < 1 month after previous scan (n = {N['within_month']})",
       f"outside the study time frame (n = {N['timeframe']})"]),
-    (["Inpatient and emergency scans", f"n = {N['inpat']}"],
-     ["Excluded", f"outpatient scans (n = {N['outpat']})"]),
     (["Scans with an assessable CTPA", f"n = {N['assessable']}"],
      ["Excluded", f"non-assessable CTPA (n = {N['nonass']})"]),
     (["Analysis population", f"n = {N['pop']}"],
