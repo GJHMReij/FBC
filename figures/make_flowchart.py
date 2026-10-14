@@ -4,7 +4,7 @@ from xml.sax.saxutils import escape
 
 N = {
     "suspected": "8,202", "excluded_top": "512", "cohort": "7,690",
-    "nonass": "6", "assessable": "7,684", "missing": "26", "pop": "7,658",
+    "nonass": "6", "assessable": "7,684", "missing_date": "25", "missing_sexage": "1", "pop": "7,658",
     "m3_nodd": "2,910", "m3_pop": "4,748",
     "tr12": "6,126", "tr12_pe": "1,109", "te12": "1,532", "te12_pe": "270",
     "tr3": "3,798", "tr3_pe": "640", "te3": "950", "te3_pe": "164",
@@ -52,7 +52,7 @@ rows = [
     (["Scans with an assessable CTPA", f"n = {N['assessable']}"],
      ["Excluded", f"non-assessable CTPA report (n = {N['nonass']})"]),
     (["Analysis population", f"n = {N['pop']}"],
-     ["Excluded", f"missing date, sex or age (n = {N['missing']})"]),
+     ["Excluded", f"missing scan date (n = {N['missing_date']})", f"missing sex or age (n = {N['missing_sexage']})"]),
 ]
 for i, (main, excl) in enumerate(rows):
     y = 20 + i * STEP
