@@ -1,10 +1,10 @@
 """Writes flowchart_selection.svg (patient/scan selection). Edit the numbers in N below and re-run."""
 N = {
-    "all": "8,258", "assessable": "8,250 (1,438 PE)", "nonass": "8", "outpat": "568",
-    "inpat": "7,682", "missing": "[ ]", "pop": "[ ]",
-    "m3_nodd": "[ ]", "m3_pop": "[ ]",
-    "tr12": "[ ]", "tr12_pe": "[ ]", "te12": "[ ]", "te12_pe": "[ ]",
-    "tr3": "[ ]", "tr3_pe": "[ ]", "te3": "[ ]", "te3_pe": "[ ]",
+    "all": "8,258", "assessable": "8,250 (1,438 PE)", "nonass": "8", "outpat": "566",
+    "inpat": "7,684", "missing": "26", "pop": "7,658",
+    "m3_nodd": "2,910", "m3_pop": "4,748",
+    "tr12": "6,126", "tr12_pe": "1,109", "te12": "1,532", "te12_pe": "270",
+    "tr3": "3,798", "tr3_pe": "640", "te3": "950", "te3_pe": "164",
 }
 W, H = 800, 860
 out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
@@ -66,8 +66,8 @@ for cxx, a, b, tr, te in [(200, 105, 295, "12", "12"), (600, 505, 695, "3", "3")
     box(b - 85, 630, 170, 90, ["Hold-out test set", f"n = {N['te' + te]} (20%)", f"{N['te' + te + '_pe']} PE"],
         fill=GREEN)
 out.append(f'<text x="{W / 2}" y="760" text-anchor="middle" font-size="12" fill="#2F5D45">'
-           'Patients with scans in both periods are allocated entirely to the training set. '
-           'The split is made after the exclusions.</text>')
+           'Patients with scans in both periods (n = 72 for Models 1 and 2; n = 45 for Model 3) '
+           'are allocated entirely to the training set.</text>')
 out.append("</g></svg>")
 open("figures/flowchart_selection.svg", "w", encoding="utf-8").write("\n".join(out))
 print("written figures/flowchart_selection.svg")
