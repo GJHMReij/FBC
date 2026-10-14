@@ -9,6 +9,14 @@ N = {
     "tr12": "6,126", "tr12_pe": "1,109", "te12": "1,532", "te12_pe": "270",
     "tr3": "3,798", "tr3_pe": "640", "te3": "950", "te3_pe": "164",
 }
+
+
+def pe_text(model, part):
+    n = int(N[part + model].replace(",", ""))
+    pe = int(N[part + model + "_pe"].replace(",", ""))
+    return f"{N[part + model + '_pe']} PE ({100 * pe / n:.1f}%)"
+
+
 W, H = 800, 1010
 GREEN, DARK, LIGHT, ARROW = "#54AA77", "#2F7D55", "#FFFFFF", "#2F5D45"
 out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
@@ -72,8 +80,8 @@ for cxx, a, b, tr in [(200, 105, 295, "12"), (600, 505, 695, "3")]:
     line(a, sp, b, sp)
     line(a, sp, a, row6, True)
     line(b, sp, b, row6, True)
-    box(a - 85, row6, 170, 90, ["Training set", f"n = {N['tr' + tr]} (80%)", f"{N['tr' + tr + '_pe']} PE"], DARK)
-    box(b - 85, row6, 170, 90, ["Hold-out test set", f"n = {N['te' + tr]} (20%)", f"{N['te' + tr + '_pe']} PE"], GREEN)
+    box(a - 85, row6, 170, 90, ["Training set", f"n = {N['tr' + tr]} (80%)", pe_text(tr, "tr")], DARK)
+    box(b - 85, row6, 170, 90, ["Hold-out test set", f"n = {N['te' + tr]} (20%)", pe_text(tr, "te")], GREEN)
 out.append(f'<text x="{W / 2}" y="{row6 + 125}" text-anchor="middle" font-size="12" fill="{ARROW}">'
            'Patients with scans in both periods (n = 72 for Models 1 and 2; n = 45 for Model 3) '
            'are allocated entirely to the training set.</text>')
