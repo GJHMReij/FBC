@@ -50,7 +50,7 @@ rows = [
     (["CTPA scans in the cohort", f"n = {N['cohort']}"],
      ["Excluded", f"scans < 1 month after previous scan (n = {N['excluded_top']})"]),
     (["Scans with an assessable CTPA", f"n = {N['assessable']}"],
-     ["Excluded", f"non-assessable CTPA report (n = {N['nonass']})"]),
+     ["Excluded", f"CTPA report missing or not assessable (n = {N['nonass']})"]),
     (["Analysis population", f"n = {N['pop']}"],
      ["Excluded", f"missing scan date (n = {N['missing_date']})", f"missing sex or age (n = {N['missing_sexage']})"]),
 ]
