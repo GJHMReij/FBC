@@ -51,7 +51,7 @@ rows = [
      ["Excluded", f"scans < 1 month after previous scan (n = {N['excluded_top']})"]),
     (["Scans with an assessable CTPA", f"n = {N['assessable']}"],
      ["Excluded", f"CTPA report missing or not assessable (n = {N['nonass']})"]),
-    (["Analysis population", f"n = {N['pop']}"],
+    (["Study population", f"n = {N['pop']}"],
      ["Excluded", f"missing scan date (n = {N['missing_date']})", f"missing sex or age (n = {N['missing_sexage']})"]),
 ]
 for i, (main, excl) in enumerate(rows):
@@ -74,7 +74,7 @@ line(600, split_y, 600, row5, True)
 mid3 = split_y + (row5 - split_y) / 2
 box(800, mid3 - 28, 260, 56, ["Excluded", f"D-dimer missing (n = {N['m3_nodd']}; {100 * int(N['m3_nodd'].replace(',', '')) / int(N['pop'].replace(',', '')):.1f}%)"], LIGHT)
 line(600, mid3, 800, mid3, True)
-box(20, row5, 360, 80, ["Models 1 and 2", "all scans in the analysis population", f"n = {N['pop']}"])
+box(20, row5, 360, 80, ["Models 1 and 2", "all scans in the study population", f"n = {N['pop']}"])
 box(420, row5, 360, 80, ["Model 3", "scans with a measured D-dimer", f"n = {N['m3_pop']}"])
 b0 = row5 + 80
 sp, row6 = b0 + 35, b0 + 70
