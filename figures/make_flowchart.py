@@ -44,7 +44,7 @@ def line(x1, y1, x2, y2, arrow=False):
     out.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{ARROW}" stroke-width="1.5"{m}/>')
 
 
-cx, BH, STEP = 290, 52, 100
+cx, BH, STEP = 400, 52, 100
 rows = [
     (["CT scans performed due to suspected PE", f"n = {N['suspected']}"], None),
     (["CTPA scans in the cohort", f"n = {N['cohort']}"],
@@ -56,14 +56,14 @@ rows = [
 ]
 for i, (main, excl) in enumerate(rows):
     y = 20 + i * STEP
-    box(90, y, 400, BH, main)
+    box(cx - 200, y, 400, BH, main)
     if i > 0:
         line(cx, y - STEP + BH, cx, y, True)
         mid = y - (STEP - BH) / 2
         wrapped = [excl[0]] + [w for t in excl[1:] for w in textwrap.wrap(t, 34)]
         h = max(56, 18 * len(wrapped) + 20)
-        box(520, mid - h / 2, 270, h, wrapped, LIGHT)
-        line(cx, mid, 520, mid, True)
+        box(630, mid - h / 2, 270, h, wrapped, LIGHT)
+        line(cx, mid, 630, mid, True)
 
 last = 20 + (len(rows) - 1) * STEP + BH          # bottom of the analysis population box
 split_y, row5 = last + 38, last + 98
