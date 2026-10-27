@@ -75,7 +75,7 @@ mid3 = split_y + (row5 - split_y) / 2
 box(800, mid3 - 28, 260, 56, ["Excluded", f"D-dimer missing (n = {N['m3_nodd']}; {100 * int(N['m3_nodd'].replace(',', '')) / int(N['pop'].replace(',', '')):.1f}%)"], LIGHT)
 line(600, mid3, 800, mid3, True)
 box(20, row5, 360, 80, ["Models 1 and 2", "all scans included in the analysis", f"n = {N['pop']}"])
-box(420, row5, 360, 80, ["Model 3", "scans with a measured D-dimer", f"n = {N['m3_pop']}"])
+box(420, row5, 360, 80, ["Model 3", "scans with a measured D-dimer", f"n = {N['m3_pop']} ({100 * int(N['m3_pop'].replace(',', '')) / int(N['pop'].replace(',', '')):.1f}%)"])
 b0 = row5 + 80
 sp, row6 = b0 + 35, b0 + 70
 for cxx, a, b, tr in [(200, 105, 295, "12"), (600, 505, 695, "3")]:
