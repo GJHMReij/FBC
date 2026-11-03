@@ -24,6 +24,11 @@ from pe_model2_cbc_diff_rf import AGE_COL, D_DIMER_VALUE_COL
 
 METRICS = ["sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"]
 
+# Optional fixed cut-offs, in the same unit as the D-dimer column. Leave None to skip them;
+# e.g. 0.5 and 0.01 if the data are in mg/L FEU, or 500 and 10 if in ug/L.
+CONVENTIONAL_CUTOFF = None
+AGE_ADJUSTED_PER_YEAR = None          # age-adjusted cut-off = age x this value above 50 years
+
 
 def ci(vals):
     v = np.asarray(vals, dtype=float)
@@ -51,21 +56,17 @@ def main():
     g_te = patients[test_mask].to_numpy()
     print(f"Training: {train_mask.sum()} scans ({y_tr.sum()} PE); hold-out test: {test_mask.sum()} scans ({y_te.sum()} PE)")
 
-    med = float(np.median(s_tr))
-    mg_l = med < 20          # mg/L FEU (cut-off 0.5) versus ug/L (cut-off 500)
-    base, per_year = (0.5, 0.01) if mg_l else (500.0, 10.0)
-    unit = "mg/L FEU" if mg_l else "ug/L"
-    print(f"D-dimer in training: median {med:g}, 5-95% {np.percentile(s_tr, 5):g}-{np.percentile(s_tr, 95):g} "
-          f"-> assumed unit {unit}; conventional cut-off {base:g}, age-adjusted {per_year:g} x age above 50")
-    print("CHECK this against the units in your data dictionary before using the conventional cut-offs.")
+    print(f"D-dimer ({D_DIMER_VALUE_COL}, used as is, like Models 3 and 4) in training: median {np.median(s_tr):g}, "
+          f"5-95% {np.percentile(s_tr, 5):g}-{np.percentile(s_tr, 95):g}")
 
-    thr_age = np.where(age_te > 50, age_te * per_year, base)
     points = {}                              # label -> threshold (scalar or per-scan array on the test set)
     for t in pp.SENS_TARGETS:
         points[f"Sensitivity {int(t * 100)}%"] = pp.thr_for_sens(y_tr, s_tr, t)
     points[f"NPV {int(pp.NPV_TARGET * 100)}%"] = pp.thr_for_npv(y_tr, s_tr, pp.NPV_TARGET)
-    points[f"Conventional ({base:g} {unit})"] = base
-    points["Age-adjusted"] = thr_age
+    if CONVENTIONAL_CUTOFF is not None:
+        points[f"Conventional ({CONVENTIONAL_CUTOFF:g})"] = CONVENTIONAL_CUTOFF
+        if AGE_ADJUSTED_PER_YEAR is not None:
+            points["Age-adjusted"] = np.where(age_te > 50, age_te * AGE_ADJUSTED_PER_YEAR, CONVENTIONAL_CUTOFF)
 
     draws = pp.make_draws(g_te, args.n_bootstrap, rng)
     prev = float(y_te.mean())
@@ -116,7 +117,7 @@ def main():
     with open(f"{pre}_results.json", "w") as f:
         json.dump({"label": "D-dimer alone", "n_train": int(train_mask.sum()), "n_test": int(test_mask.sum()),
                    "pe_train": int(y_tr.sum()), "pe_test": int(y_te.sum()),
-                   "auc": {"est": auc, "lo": auc_lo, "hi": auc_hi}, "unit": unit,
+                   "auc": {"est": auc, "lo": auc_lo, "hi": auc_hi},
                    "operating_points": res}, f, indent=1)
 
     try:
@@ -130,10 +131,10 @@ def main():
                 f"Hold-out test: {int(test_mask.sum())} scans ({int(y_te.sum())} PE, {y_te.mean() * 100:.1f}%)",
             ],
             "settings": [
-                ("Score", "D-dimer level (higher = more likely PE)"),
-                ("Unit (assumed)", unit),
+                ("Score", f"D-dimer level ({D_DIMER_VALUE_COL}, used as is; higher = more likely PE)"),
                 ("Thresholds", "97/98/99% sensitivity and NPV 98% from the training set, applied unchanged to the test set"),
-                ("Fixed cut-offs", f"conventional {base:g} {unit}; age-adjusted {per_year:g} x age above 50 years"),
+                ("Fixed cut-offs", "not used" if CONVENTIONAL_CUTOFF is None else
+                 f"conventional {CONVENTIONAL_CUTOFF:g}; age-adjusted {AGE_ADJUSTED_PER_YEAR} x age above 50 years"),
                 ("Confidence intervals", f"patient-level bootstrap, {len(draws)} draws"),
             ],
             "test_metrics": [("AUC (test)", f"{auc:.3f} ({auc_lo:.3f}-{auc_hi:.3f})")],
