@@ -34,6 +34,11 @@ def roc_figure(available):
         with open(RESULTS / f"model{n}_roc_data.json") as f:
             d = json.load(f)
         ax.plot(d["fpr"], d["tpr"], color=COLORS[n], lw=2, label=f"{MODELS[n]} (AUC {d['auc']:.3f})")
+    dd = RESULTS / "ddimer_only_roc_data.json"
+    if dd.exists():
+        with open(dd) as f:
+            d = json.load(f)
+        ax.plot(d["fpr"], d["tpr"], color="black", lw=1.8, ls=":", label=f"D-dimer alone (AUC {d['auc']:.3f})")
     ax.plot([0, 1], [0, 1], "--", color="grey", label="Chance")
     ax.set_xlabel("1 - Specificity")
     ax.set_ylabel("Sensitivity")
