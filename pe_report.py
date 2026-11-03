@@ -75,9 +75,10 @@ def build_report(path_prefix, info):
         add_table(info["hospitals"][0], info["hospitals"][1:])
         n += 1
 
-    doc.add_heading(f"{n}. Feature importance (top 20)", level=1)
-    imp = info["importance"].head(20)
-    add_table(["Feature", "Importance"], [[i, f"{v:.4f}"] for i, v in imp.items()])
+    if info.get("importance") is not None:
+        doc.add_heading(f"{n}. Feature importance (top 20)", level=1)
+        imp = info["importance"].head(20)
+        add_table(["Feature", "Importance"], [[i, f"{v:.4f}"] for i, v in imp.items()])
 
     out = f"{path_prefix}_report.docx"
     doc.save(out)
@@ -109,9 +110,11 @@ def _build_html(path_prefix, info):
                  "".join(f"<th>{c}</th>" for c in hs[0]) + "</tr>" +
                  "".join("<tr>" + "".join(f"<td>{v}</td>" for v in r) + "</tr>" for r in hs[1:]) +
                  "</table>")
-    h.append("<h2>Feature importance (top 20)</h2><table border=1>" +
-             "".join(f"<tr><td>{i}</td><td>{v:.4f}</td></tr>" for i, v in info["importance"].head(20).items()) +
-             "</table></body></html>")
+    if info.get("importance") is not None:
+        h.append("<h2>Feature importance (top 20)</h2><table border=1>" +
+                 "".join(f"<tr><td>{i}</td><td>{v:.4f}</td></tr>" for i, v in info["importance"].head(20).items()) +
+                 "</table>")
+    h.append("</body></html>")
     out = f"{path_prefix}_report.html"
     Path(out).write_text("\n".join(h), encoding="utf-8")
     return out
