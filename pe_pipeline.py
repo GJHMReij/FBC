@@ -72,7 +72,8 @@ DATE_FORMATS = [
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d-%m-%Y %H:%M:%S",
     "%d-%m-%Y %H:%M", "%Y-%m-%d", "%d-%m-%Y",
 ]
-MODEL_LABELS = {1: "Model 1 (CBC)", 2: "Model 2 (+DIFF)", 3: "Model 3 (+D-dimer)"}
+MODEL_LABELS = {1: "Model 1 (CBC)", 2: "Model 2 (+DIFF)", 3: "Model 3 (+D-dimer)",
+                4: "Model 4 (D-dimer, age, sex, creatinine)"}
 
 # Grid according to Kasia (identical for all models)
 FULL_GRID = {
@@ -185,7 +186,7 @@ def load_and_prepare(args):
     else:
         print(f"WARNING: '{CLASS_COL}' not found -- no outpatient exclusion applied")
 
-    if args.require_ddimer or args.models == [3]:
+    if args.require_ddimer or set(args.models) <= {3, 4}:
         has_dd = pd.to_numeric(df[D_DIMER_VALUE_COL], errors="coerce").notna()
         print(f"Excluding {int((~has_dd).sum())} scans without a measured D-dimer "
               f"({D_DIMER_VALUE_COL}) BEFORE the split; {int(has_dd.sum())} scans remain")
@@ -245,6 +246,7 @@ def load_and_prepare(args):
         1: ["sex_enc", AGE_COL, CREATININE_COL] + cbc_numeric,
         2: ["sex_enc", AGE_COL, CREATININE_COL] + numeric,
         3: ["sex_enc", AGE_COL, CREATININE_COL, D_DIMER_VALUE_COL, "D_dimer_assay_enc"] + numeric,
+        4: ["sex_enc", AGE_COL, CREATININE_COL, D_DIMER_VALUE_COL],
     }
     imputation_cols = ["sex_enc", AGE_COL, CREATININE_COL] + numeric + aux_cols
     all_nan = [c for c in imputation_cols if df[c].isna().all()]
@@ -428,7 +430,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     print(f"\n{'=' * 70}\n{label}: {len(feats)} features\n{'=' * 70}")
 
     pop = pd.Series(True, index=df.index)
-    if model_no == 3:
+    if model_no in (3, 4):
         pop = df[D_DIMER_VALUE_COL].notna() & df["D_dimer_assay_enc"].notna()
         print(f"Excluding {int((~pop).sum())} scans without a measured D-dimer "
               f"(not imputed), in training and test set")
@@ -441,7 +443,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     print(f"Training: {train_mask.sum()} scans ({y_train.sum()} PE, {y_train.mean() * 100:.1f}%)")
     print(f"Hold-out test: {test_mask.sum()} scans ({y_test.sum()} PE, {y_test.mean() * 100:.1f}%)")
 
-    tag = "pop_dd" if (model_no == 3 or args.require_ddimer) else "pop_all"
+    tag = "pop_dd" if (model_no in (3, 4) or args.require_ddimer) else "pop_all"
     frame = df[imputation_cols]
     sets = impute_sets(frame, train_mask, test_mask, args.n_imputations, args.mice_max_iter,
                        args.seed, out_dir / "cache", tag)
@@ -673,7 +675,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                 f"Training: {int(train_mask.sum())} scans, {int(y_train.sum())} PE ({y_train.mean() * 100:.1f}%); hospitals {hosp_counts(train_mask)}",
                 f"Hold-out test: {int(test_mask.sum())} scans, {int(y_test.sum())} PE ({y_test.mean() * 100:.1f}%); hospitals {hosp_counts(test_mask)}",
                 f"Test patients' first scan on/after {cutoff.date()}; patients with scans in both periods are in the training set",
-                "Excluded: outpatient scans, scans without definitive outcome" + ("; scans without D-dimer" if model_no == 3 else ""),
+                "Excluded: outpatient scans, scans without definitive outcome" + ("; scans without D-dimer" if model_no in (3, 4) else ""),
             ],
             "settings": [
                 ("Number of features", len(feats)),
@@ -730,7 +732,7 @@ def parse_args():
     p.add_argument("--outcome-correction", type=Path, default=None,
                    help=f"Excel/CSV with the definitive outcome ('{OUTCOME_CORRECTION_COL}', "
                         f"joined on '{ORDER_ID_COL}'); rows '{NOT_ASSESSABLE_VALUE}' are dropped")
-    p.add_argument("--models", type=int, nargs="+", default=[1], choices=[1, 2, 3])
+    p.add_argument("--models", type=int, nargs="+", default=[1], choices=[1, 2, 3, 4])
     p.add_argument("--test-fraction", type=float, default=0.2)
     p.add_argument("--n-imputations", type=int, default=10)
     p.add_argument("--mice-max-iter", type=int, default=10)
@@ -741,7 +743,7 @@ def parse_args():
     p.add_argument("--no-recalibration", action="store_true",
                    help="skip the logistic recalibration of the predicted probabilities")
     p.add_argument("--require-ddimer", action="store_true",
-                   help="exclude scans without a measured D-dimer before the split (automatic when running only Model 3)")
+                   help="exclude scans without a measured D-dimer before the split (automatic when running only Model 3 and/or 4)")
     p.add_argument("--quick", action="store_true",
                    help="Fast smoke test: 2 imputations, 2 MICE iterations, tiny grid, 20 bootstrap draws")
     p.add_argument("--fake-dates-for-testing", action="store_true",

@@ -1,6 +1,6 @@
 """
-Runs Model 1, 2 and 3 one after the other on the real MyDRE cohort (git pull first).
-Each model is its own run (Model 3 builds its own split, after excluding scans
+Runs Model 1, 2, 3 and 4 one after the other on the real MyDRE cohort (git pull first).
+Each model is its own run (Models 3 and 4 build their own split (identical to each other), after excluding scans
 without D-dimer). If one model fails, the next one still runs.
 
 QUICK = True does a fast smoke test (2 imputations, tiny grid, 20 bootstrap
@@ -15,7 +15,7 @@ FOLDER = r"C:\Users\Max.Reijers\Documents\FBC_pe_models"
 INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\CohortMLgeslacht.csv"
 OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\df_met_script8000.xlsx"
 QUICK = True
-MODELS = [1, 2, 3]
+MODELS = [1, 2, 3, 4]
 
 STAMP = f"{datetime.now():%Y%m%d_%H%M%S}"
 
