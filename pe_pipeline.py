@@ -66,6 +66,7 @@ PATIENT_COL = "Pseudo_id"
 CLASS_COL = "Patientklasse"
 EXCLUDE_CLASS_PATTERN = r"^\s*poliklinisch\s*$"
 SENS_TARGETS = [0.97, 0.98, 0.99]
+NPV_TARGET = 0.98        # extra operating point: at most 2% of the scans below the threshold have PE
 METRIC_KEYS = ["sensitivity", "specificity", "ppv", "npv", "efficiency", "accuracy", "f1"]
 DATE_FORMATS = [
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d-%m-%Y %H:%M:%S",
@@ -308,6 +309,17 @@ def thr_for_sens(y, p, target):
     return pos[min(k, len(pos) - 1)]
 
 
+def thr_for_npv(y, p, target):
+    """Largest threshold such that the scans below it have NPV >= target."""
+    order = np.argsort(p, kind="stable")
+    ps, ys = p[order], y[order]
+    cum_pe = np.cumsum(ys)
+    # candidate thresholds: every unique predicted value; scans strictly below are 'negative'
+    first = np.searchsorted(ps, np.unique(ps), side="left")
+    ok = [i for i in first if i > 0 and cum_pe[i - 1] / i <= 1 - target]
+    return ps[max(ok)] if ok else ps[0]
+
+
 def metrics_np(y, p, thr):
     pred = p >= thr
     pos = y == 1
@@ -340,6 +352,11 @@ def stat_vector(y, p, thr_train=None):
         if thr_train is not None:
             for k, v in metrics_np(y, p, thr_train[t]).items():
                 out[f"A{t}_{k}"] = v
+    for k, v in metrics_np(y, p, thr_for_npv(y, p, NPV_TARGET)).items():
+        out[f"Bnpv_{k}"] = v
+    if thr_train is not None:
+        for k, v in metrics_np(y, p, thr_train["npv"]).items():
+            out[f"Anpv_{k}"] = v
     return out
 
 
@@ -383,6 +400,11 @@ def pooled_table(pooled, prefix):
             d = pooled.get(f"{prefix}{t}_{k}")
             row[k] = f"{d['est']:.3f} [{d['lo']:.3f}, {d['hi']:.3f}]" if d else ""
         rows[f"{int(t * 100)}%"] = row
+    if f"{prefix}npv_npv" in pooled:
+        rows[f"NPV {int(NPV_TARGET * 100)}%"] = {
+            k: f"{pooled[f'{prefix}npv_{k}']['est']:.3f} "
+               f"[{pooled[f'{prefix}npv_{k}']['lo']:.3f}, {pooled[f'{prefix}npv_{k}']['hi']:.3f}]"
+            for k in METRIC_KEYS}
     return pd.DataFrame(rows).T
 
 
@@ -482,11 +504,13 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
         print("\nNo recalibration (--no-recalibration)")
 
     # thresholds for the fixed sensitivities, from the training set (5-fold cross-validated predictions)
-    thr_train_m = [{t: thr_for_sens(y_train, o, t) for t in SENS_TARGETS} for o in p_oob]
+    thr_train_m = [{**{t: thr_for_sens(y_train, o, t) for t in SENS_TARGETS},
+                    "npv": thr_for_npv(y_train, o, NPV_TARGET)} for o in p_oob]
     p_ens_train = np.mean(p_train, axis=0)
     p_ens_oob = np.mean(p_oob, axis=0)
     p_ens_test = np.mean(p_test, axis=0)
-    thr_ens = {t: thr_for_sens(y_train, p_ens_oob, t) for t in SENS_TARGETS}
+    thr_ens = {**{t: thr_for_sens(y_train, p_ens_oob, t) for t in SENS_TARGETS},
+               "npv": thr_for_npv(y_train, p_ens_oob, NPV_TARGET)}
 
     print(f"\nBootstrap ({args.n_bootstrap} patient-level draws on the test set; "
           f"{args.n_bootstrap_train} on the training set) + Rubin's rules ...")
@@ -583,12 +607,12 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     def per_1000(prefix):
         prev = float(y_test.mean())
         rows = {}
-        for t in SENS_TARGETS:
+        for t in SENS_TARGETS + ["npv"]:
             sens = pooled_test[f"{prefix}{t}_sensitivity"]["est"]
             spec = pooled_test[f"{prefix}{t}_specificity"]["est"]
             eff = pooled_test[f"{prefix}{t}_efficiency"]["est"]
             npv = pooled_test[f"{prefix}{t}_npv"]["est"]
-            rows[f"{int(round(t * 100))}%"] = {
+            rows[f"NPV {int(NPV_TARGET * 100)}%" if t == "npv" else f"{int(round(t * 100))}%"] = {
                 "PE per 1000 scans": round(1000 * prev),
                 "scans saved (no CTPA)": round(1000 * eff),
                 "of which without PE": round(1000 * spec * (1 - prev)),
