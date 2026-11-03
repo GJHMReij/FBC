@@ -74,14 +74,16 @@ def main():
     for label, thr in points.items():
         point = pp.metrics_np(y_te, s_te, thr)
         boots = [pp.metrics_np(y_te[i], s_te[i], thr if np.isscalar(thr) else thr[i]) for i in draws]
-        rows[label] = {k: "{:.3f} [{:.3f}, {:.3f}]".format(point[k], *ci([b[k] for b in boots])) for k in METRICS}
+        rows[label] = {k: ("not reached" if np.isnan(point[k]) else
+                           "{:.3f} [{:.3f}, {:.3f}]".format(point[k], *ci([b[k] for b in boots])))
+                       for k in METRICS}
         per1000[label] = {
             "PE per 1000 scans": round(1000 * prev),
             "scans saved (no CTPA)": round(1000 * point["efficiency"]),
             "of which without PE": round(1000 * point["specificity"] * (1 - prev)),
             "PE missed": round(1000 * prev * (1 - point["sensitivity"]), 1),
             "% of scans saved": f"{point['efficiency'] * 100:.1f}",
-            "NPV": f"{point['npv']:.3f}",
+            "NPV": "not reached" if np.isnan(point["npv"]) else f"{point['npv']:.3f}",
         }
         res[label] = {k: {"est": float(point[k]), "lo": ci([b[k] for b in boots])[0],
                           "hi": ci([b[k] for b in boots])[1]} for k in METRICS}

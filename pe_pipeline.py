@@ -404,8 +404,9 @@ def pooled_table(pooled, prefix):
         rows[f"{int(t * 100)}%"] = row
     if f"{prefix}npv_npv" in pooled:
         rows[f"NPV {int(NPV_TARGET * 100)}%"] = {
-            k: f"{pooled[f'{prefix}npv_{k}']['est']:.3f} "
-               f"[{pooled[f'{prefix}npv_{k}']['lo']:.3f}, {pooled[f'{prefix}npv_{k}']['hi']:.3f}]"
+            k: ("not reached" if np.isnan(pooled[f'{prefix}npv_{k}']['est']) else
+                f"{pooled[f'{prefix}npv_{k}']['est']:.3f} "
+                f"[{pooled[f'{prefix}npv_{k}']['lo']:.3f}, {pooled[f'{prefix}npv_{k}']['hi']:.3f}]")
             for k in METRIC_KEYS}
     return pd.DataFrame(rows).T
 
@@ -620,7 +621,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                 "of which without PE": round(1000 * spec * (1 - prev)),
                 "PE missed": round(1000 * prev * (1 - sens), 1),
                 "% of scans saved": f"{eff * 100:.1f}",
-                "NPV": f"{npv:.3f}",
+                "NPV": "not reached" if np.isnan(npv) else f"{npv:.3f}",
             }
         return pd.DataFrame(rows).T
 
