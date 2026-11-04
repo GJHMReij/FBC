@@ -6,6 +6,7 @@ thread and with the default threads. Run on MyDRE via run_time_mice.py.
 import time
 
 import numpy as np
+from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 from sklearn.impute import IterativeImputer
 from threadpoolctl import threadpool_info, threadpool_limits
 
