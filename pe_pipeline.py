@@ -29,6 +29,7 @@ Local smoke test on the dummy CSV (its dates are placeholders):
 import argparse
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -459,7 +460,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
           f"on training imputation set 1 ...")
     cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=args.seed)
     search = GridSearchCV(RandomForestClassifier(random_state=args.seed, n_jobs=1),
-                          grid, cv=cv, scoring="roc_auc", n_jobs=-1, refit=False, verbose=0)
+                          grid, cv=cv, scoring="roc_auc", n_jobs=args.n_jobs, refit=False, verbose=0)
     with Heartbeat("GridSearchCV"):
         search.fit(train_sets[0][feats], y_train, groups=g_train)
     best = search.best_params_
@@ -469,7 +470,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     print(f"\nBuilding {args.n_imputations} random forests ...")
     forests, p_train, p_oob, p_test = [], [], [], []
     for m in range(args.n_imputations):
-        rf = RandomForestClassifier(**best, random_state=args.seed + m, n_jobs=-1)
+        rf = RandomForestClassifier(**best, random_state=args.seed + m, n_jobs=args.n_jobs)
         with Heartbeat(f"RF {m + 1}"):
             rf.fit(train_sets[m][feats], y_train)
         # cross-validated (out-of-fold) predictions on the training set, from forests of the
@@ -477,7 +478,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
         oob = np.full(len(y_train), np.nan)
         with Heartbeat(f"CV predictions {m + 1}"):
             for tr_idx, va_idx in cv.split(train_sets[m][feats], y_train, groups=g_train):
-                rf_cv = RandomForestClassifier(**best, random_state=args.seed + m, n_jobs=-1)
+                rf_cv = RandomForestClassifier(**best, random_state=args.seed + m, n_jobs=args.n_jobs)
                 rf_cv.fit(train_sets[m][feats].iloc[tr_idx], y_train[tr_idx])
                 oob[va_idx] = rf_cv.predict_proba(train_sets[m][feats].iloc[va_idx])[:, 1]
         forests.append(rf)
@@ -727,6 +728,16 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
 
 # -------------------------------------------------------------------------------- main
 
+def lower_priority():
+    """Below-normal priority (Windows) so Spyder/the desktop stay responsive; worker
+    processes started afterwards inherit it."""
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x4000)
+    except Exception:
+        pass
+
+
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--input-csv", type=Path, default=DEFAULT_INPUT_CSV)
@@ -740,6 +751,9 @@ def parse_args():
     p.add_argument("--n-bootstrap", type=int, default=500)
     p.add_argument("--n-bootstrap-train", type=int, default=100)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--reserve-cores", type=int, default=2,
+                   help="CPU cores left free so the machine stays responsive (default 2); "
+                        "the run also gets below-normal priority on Windows")
     p.add_argument("--out-dir", type=Path, default=REPO_ROOT / "results_temporal")
     p.add_argument("--no-recalibration", action="store_true",
                    help="skip the logistic recalibration of the predicted probabilities")
@@ -750,6 +764,8 @@ def parse_args():
     p.add_argument("--fake-dates-for-testing", action="store_true",
                    help="Dummy CSV only: its dates are placeholders, so synthesise dates and repeated patients")
     args = p.parse_args()
+    args.n_jobs = max(1, (os.cpu_count() or 2) - args.reserve_cores)
+    lower_priority()
     if args.quick:
         args.n_imputations = min(args.n_imputations, 2)
         args.mice_max_iter = min(args.mice_max_iter, 2)
