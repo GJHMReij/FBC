@@ -611,14 +611,14 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     obs, pred = calibration_curve(y_test, p_ens_test, n_bins=10, strategy="quantile")
     # continuous calibration line over 0-1: observed = expit(intercept + slope * logit(p))
     xs = np.linspace(0.001, 0.999, 200)
-    cal_line = 1 / (1 + np.exp(-(ens_test["intercept"]["est"]
-                                 + ens_test["slope"]["est"] * np.log(xs / (1 - xs)))))
+    sl_p, ic_p = pooled_test["slope"], pooled_test["intercept"]   # Rubin-pooled: same numbers as the tables
+    cal_line = 1 / (1 + np.exp(-(ic_p["est"] + sl_p["est"] * np.log(xs / (1 - xs)))))
     fig2, (ax2, axh) = plt.subplots(2, 1, figsize=(6, 7.5), sharex=True,
                                     gridspec_kw={"height_ratios": [4, 1]})
     ax2.plot([0, 1], [0, 1], "--", color="grey", label="Perfect calibration")
     ax2.plot(xs, cal_line, color="tab:orange",
-             label=f"Calibration line (slope={ens_test['slope']['est']:.3f}, "
-                   f"intercept={ens_test['intercept']['est']:.3f})")
+             label=(f"Slope {sl_p['est']:.3f} ({sl_p['lo']:.2f} to {sl_p['hi']:.2f})\n"
+                    f"Intercept {ic_p['est']:.3f} ({ic_p['lo']:.2f} to {ic_p['hi']:.2f})"))
     ax2.plot(pred, obs, marker="o", linestyle="none", color="tab:blue", label="Deciles of predicted risk")
     ax2.set_xlim(0, 1)
     ax2.set_ylim(0, 1)

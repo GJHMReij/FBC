@@ -4,6 +4,7 @@ Word report with all results of one model (written next to the other outputs).
 Uses python-docx. If python-docx is not installed, an HTML file with the same
 content is written instead (Word opens .html files too) and a warning is printed.
 """
+import base64
 from pathlib import Path
 
 import pandas as pd
@@ -97,7 +98,11 @@ def _build_html(path_prefix, info):
          "".join(f"<tr><td>{a}</td><td>{b}</td></tr>" for a, b in info["test_metrics"]) + "</table>",
          "<h2>4. Figures</h2>"]
     for title, p in info["images"]:
-        h.append(f"<p>{title}<br><img src='{Path(p).name}' width='480'></p>")
+        if Path(p).exists():   # embedded in the file itself, so the report is self-contained
+            data = base64.b64encode(Path(p).read_bytes()).decode()
+            h.append(f"<p>{title}<br><img src='data:image/png;base64,{data}' width='480'></p>")
+        else:
+            h.append(f"<p>{title}<br>(figure file not found: {Path(p).name})</p>")
     for k, (title, tbl, note) in enumerate(info["tables"], start=5):
         cols, rows = _table_rows(tbl)
         h.append(f"<h2>{k}. {title}</h2><p>{note or ''}</p><table border=1><tr>" +
