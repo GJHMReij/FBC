@@ -6,8 +6,10 @@ Per model (1 = CBC, 2 = CBC+DIFF, 3 = CBC+DIFF+D-dimer):
   2. Temporal split: hold-out test set = exactly the most recent 20% of scans,
      built per patient (a patient is wholly in one set; patients with scans in
      both periods are allocated entirely to the training set).
-  3. MICE, separately for training and test set (outcome NOT in the imputation
-     model): 10 imputation sets each.
+  3. MICE, separately for training and test set: 10 imputation sets each. The
+     outcome is NOT in the imputation model, unless --outcome-in-train-imputation
+     is given: then the outcome is an extra variable in the TRAINING imputation
+     only (the test set is always imputed without the outcome).
   4. Grid search (5-fold, patient-grouped CV, AUC) on training imputation set 1.
   5. Build one RF per training imputation set; the mean predicted probability
      of the 10 RFs is the model.
@@ -261,9 +263,14 @@ def load_and_prepare(args):
 
 # ------------------------------------------------------------------------ imputation
 
-def impute_sets(frame, train_mask, test_mask, n_imputations, max_iter, seed, cache_dir, tag):
-    """MICE, run separately on the training and the test set (no outcome in the
-    imputation model). Cached on disk so Models 1 and 2 share one run."""
+def impute_sets(frame, train_mask, test_mask, n_imputations, max_iter, seed, cache_dir, tag,
+                y_train=None):
+    """MICE, run separately on the training and the test set. If y_train is given, the
+    outcome is included as an extra variable in the TRAINING imputation only (the
+    test set is never imputed with the outcome); it is dropped again afterwards.
+    Cached on disk so Models 1 and 2 share one run."""
+    with_y = y_train is not None
+    tag = tag + ("_y" if with_y else "")
     key_src = (tag, tuple(frame.index[train_mask]), tuple(frame.index[test_mask]),
                tuple(frame.columns), n_imputations, max_iter, seed)
     key = hashlib.md5(repr(key_src).encode()).hexdigest()[:12]
@@ -284,15 +291,20 @@ def impute_sets(frame, train_mask, test_mask, n_imputations, max_iter, seed, cac
             print(f"WARNING: '{c}' is empty in the test set; filled with the training median")
             test_frame[c] = train_frame[c].median()
     train_frame, test_frame = train_frame[cols], test_frame[cols]
+    if with_y:
+        print("MICE training sets: outcome included as an imputation variable (test sets: without outcome)")
+        train_frame = train_frame.assign(_outcome=np.asarray(y_train, dtype=float))
 
     def run(source, offset, label):
         sets = []
+        cols_out = list(source.columns)
         for m in range(n_imputations):
             imputer = IterativeImputer(sample_posterior=True, random_state=seed + offset + m,
                                        max_iter=max_iter, initial_strategy="median")
             with Heartbeat(f"MICE {label} {m + 1}/{n_imputations}"):
                 imputed = imputer.fit_transform(source)
-            sets.append(pd.DataFrame(imputed, columns=cols, index=source.index))
+            df_imp = pd.DataFrame(imputed, columns=cols_out, index=source.index)
+            sets.append(df_imp.drop(columns=["_outcome"], errors="ignore"))
             print(f"  MICE {label} imputation {m + 1}/{n_imputations} done", flush=True)
         return sets
 
@@ -448,7 +460,8 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     tag = "pop_dd" if (model_no in (3, 4) or args.require_ddimer) else "pop_all"
     frame = df[imputation_cols]
     sets = impute_sets(frame, train_mask, test_mask, args.n_imputations, args.mice_max_iter,
-                       args.seed, out_dir / "cache", tag)
+                       args.seed, out_dir / "cache", tag,
+                       y_train=y_train if args.outcome_in_train_imputation else None)
     train_sets, test_sets = sets["train"], sets["test"]
     missing_cols = [f for f in feats if f not in train_sets[0].columns]
     if missing_cols:
@@ -682,6 +695,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
             "settings": [
                 ("Number of features", len(feats)),
                 ("Imputations (training and test, separately)", args.n_imputations),
+                ("Outcome in training imputation", "yes (test: no)" if args.outcome_in_train_imputation else "no"),
                 ("MICE iterations", args.mice_max_iter),
                 ("Best hyperparameters (grid search, 5-fold CV, AUC)", best),
                 ("Best cross-validated AUC", f"{float(search.best_score_):.3f}"),
@@ -759,6 +773,9 @@ def parse_args():
                    help="skip the logistic recalibration of the predicted probabilities")
     p.add_argument("--require-ddimer", action="store_true",
                    help="exclude scans without a measured D-dimer before the split (automatic when running only Model 3 and/or 4)")
+    p.add_argument("--outcome-in-train-imputation", action="store_true",
+                   help="include the outcome as a variable in the MICE of the TRAINING sets only "
+                        "(the test sets are always imputed without the outcome)")
     p.add_argument("--quick", action="store_true",
                    help="Fast smoke test: 2 imputations, 2 MICE iterations, tiny grid, 20 bootstrap draws")
     p.add_argument("--fake-dates-for-testing", action="store_true",
