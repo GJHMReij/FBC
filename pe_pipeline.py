@@ -10,7 +10,8 @@ Per model (1 = CBC, 2 = CBC+DIFF, 3 = CBC+DIFF+D-dimer):
      outcome is NOT in the imputation model, unless --outcome-in-train-imputation
      is given: then the outcome is an extra variable in the TRAINING imputation
      only (the test set is always imputed without the outcome).
-  4. Grid search (5-fold, patient-grouped CV, AUC) on training imputation set 1.
+  4. Grid search (5-fold, patient-grouped CV, AUC) on training imputation set 1,
+     or on the first --tuning-sets sets with the CV-AUC averaged over those sets.
   5. Build one RF per training imputation set; the mean predicted probability
      of the 10 RFs is the model.
   6. Evaluate on the 10 imputed test sets; per-imputation estimates are pooled
@@ -469,16 +470,26 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
 
     grid = QUICK_GRID if args.quick else FULL_GRID
     n_combo = int(np.prod([len(v) for v in grid.values()]))
+    n_tune = max(1, min(args.tuning_sets, len(train_sets)))
     print(f"\nGrid search: {n_combo} combinations x 5 folds (patient-grouped, AUC) "
-          f"on training imputation set 1 ...")
+          f"on {n_tune} training imputation set(s); CV-AUC averaged over the sets ...")
     cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=args.seed)
-    search = GridSearchCV(RandomForestClassifier(random_state=args.seed, n_jobs=1),
-                          grid, cv=cv, scoring="roc_auc", n_jobs=args.n_jobs, refit=False, verbose=0)
-    with Heartbeat("GridSearchCV"):
-        search.fit(train_sets[0][feats], y_train, groups=g_train)
-    best = search.best_params_
+    score_sum, cand_params = None, None
+    for t in range(n_tune):
+        search = GridSearchCV(RandomForestClassifier(random_state=args.seed, n_jobs=1),
+                              grid, cv=cv, scoring="roc_auc", n_jobs=args.n_jobs, refit=False, verbose=0)
+        with Heartbeat(f"GridSearchCV set {t + 1}/{n_tune}"):
+            search.fit(train_sets[t][feats], y_train, groups=g_train)
+        sc = np.asarray(search.cv_results_["mean_test_score"], dtype=float)
+        score_sum = sc if score_sum is None else score_sum + sc
+        cand_params = search.cv_results_["params"]
+        print(f"  tuning set {t + 1}/{n_tune}: best CV AUC {sc.max():.3f}", flush=True)
+    mean_scores = score_sum / n_tune
+    best_idx = int(np.argmax(mean_scores))
+    best = cand_params[best_idx]
+    best_cv_auc = float(mean_scores[best_idx])
     print(f"Best params (fixed for all imputation sets): {best}")
-    print(f"Best CV AUC (imputation set 1): {search.best_score_:.3f}")
+    print(f"Best CV AUC (mean over {n_tune} imputation set(s)): {best_cv_auc:.3f}")
 
     print(f"\nBuilding {args.n_imputations} random forests ...")
     forests, p_train, p_oob, p_test = [], [], [], []
@@ -652,7 +663,7 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
     tbl_train.to_csv(f"{pre}_training_apparent.csv")
     results = {
         "label": label, "n_features": len(feats), "best_params": best,
-        "best_cv_auc": float(search.best_score_), "cutoff_date": str(cutoff.date()),
+        "best_cv_auc": best_cv_auc, "cutoff_date": str(cutoff.date()),
         "n_train": int(train_mask.sum()), "n_test": int(test_mask.sum()),
         "pe_train": int(y_train.sum()), "pe_test": int(y_test.sum()),
         "test_pooled": pooled_test, "train_pooled": pooled_train,
@@ -698,7 +709,8 @@ def run_model(model_no, args, df, y, features, imputation_cols, is_test, cutoff,
                 ("Outcome in training imputation", "yes (test: no)" if args.outcome_in_train_imputation else "no"),
                 ("MICE iterations", args.mice_max_iter),
                 ("Best hyperparameters (grid search, 5-fold CV, AUC)", best),
-                ("Best cross-validated AUC", f"{float(search.best_score_):.3f}"),
+                ("Best cross-validated AUC", f"{best_cv_auc:.3f}"),
+                ("Imputation sets used for tuning", n_tune),
                 ("Recalibration (logistic, fitted on training CV predictions)",
                  "none" if cal_slope is None else
                  f"slope {cal_slope:.3f}, intercept {cal_int:.3f}; test calibration before: "
@@ -776,6 +788,9 @@ def parse_args():
     p.add_argument("--outcome-in-train-imputation", action="store_true",
                    help="include the outcome as a variable in the MICE of the TRAINING sets only "
                         "(the test sets are always imputed without the outcome)")
+    p.add_argument("--tuning-sets", type=int, default=1,
+                   help="number of training imputation sets the grid search is run on; the CV-AUC "
+                        "of each hyperparameter combination is averaged over these sets (default 1)")
     p.add_argument("--quick", action="store_true",
                    help="Fast smoke test: 2 imputations, 2 MICE iterations, tiny grid, 20 bootstrap draws")
     p.add_argument("--fake-dates-for-testing", action="store_true",

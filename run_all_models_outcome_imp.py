@@ -59,6 +59,7 @@ for model_no in MODELS:
         "--input-csv", INPUT_CSV,
         "--outcome-correction", OUTCOME_CORRECTION,
         "--outcome-in-train-imputation",
+        "--tuning-sets", "3",
         "--out-dir", OUT_DIR,
     ]
     if QUICK:
