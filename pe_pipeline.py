@@ -81,11 +81,11 @@ MODEL_LABELS = {1: "Model 1 (CBC)", 2: "Model 2 (+DIFF)", 3: "Model 3 (+D-dimer)
 
 # Grid according to Kasia (identical for all models)
 FULL_GRID = {
-    "n_estimators": [200, 300, 500],
-    "max_depth": [3, 5, 7, 9],
-    "min_samples_leaf": [10, 25, 50],
-    "min_samples_split": [20, 50, 100],
-    "max_features": ["sqrt", 0.2, 0.3],
+    "n_estimators": [500],
+    "max_depth": [5, 7, 9, 12, 15],
+    "min_samples_leaf": [10, 25, 50, 100, 200, 300],
+    "min_samples_split": [10, 20, 50, 100],
+    "max_features": [0.1, 0.2, 0.3, 0.4],
 }
 QUICK_GRID = {
     "n_estimators": [100],
