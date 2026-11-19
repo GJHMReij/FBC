@@ -1,11 +1,13 @@
 """
 Combined figures for all four models (ROC, calibration, scans saved), read from
-results_temporal/. Run on MyDRE after the model runs; only figures are written
+results_temporal_outcome_imp/ (default; pass another folder name as
+argument for e.g. the old run). Run on MyDRE after the model runs; only figures are written
 (model{n}_predictions.csv holds scan-level rows and never leaves MyDRE).
 
-    python combine_figures.py            (or press F5 in Spyder)
+    python combine_figures.py [results_folder]   (or press F5 in Spyder)
 """
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -14,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-RESULTS = Path(__file__).resolve().parent / "results_temporal"
+RESULTS = Path(__file__).resolve().parent / (sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "results_temporal_outcome_imp")
 MODELS = {1: "Model 1 (CBC)", 2: "Model 2 (+DIFF)", 3: "Model 3 (+D-dimer)",
           4: "Model 4 (D-dimer, age, sex, creatinine)"}
 COLORS = {1: "#0072B2", 2: "#E69F00", 3: "#009E73", 4: "#CC79A7"}   # colour-blind safe
