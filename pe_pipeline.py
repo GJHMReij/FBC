@@ -399,12 +399,21 @@ def pooled_performance(y, p_list, thr_list, draws):
         per_m_est.append(point)
         per_m_var.append(var)
     pooled = {}
+    m_total = len(p_list)
     for k in per_m_est[0]:
-        est, _, se = rubin_pool([e[k] for e in per_m_est], [v[k] for v in per_m_var])
+        # Rubin's rules over the imputations in which the metric is defined (e.g. the NPV is
+        # undefined when no scan falls below the cut-off); n_sets says over how many it was pooled
+        pairs = [(e[k], v[k]) for e, v in zip(per_m_est, per_m_var)
+                 if np.isfinite(e[k]) and np.isfinite(v[k])]
+        if pairs:
+            est, _, se = rubin_pool([a for a, _ in pairs], [b for _, b in pairs])
+        else:
+            est = se = float("nan")
         lo, hi = est - 1.96 * se, est + 1.96 * se
         if k not in ("slope", "intercept"):
             lo, hi = max(lo, 0.0), min(hi, 1.0)
-        pooled[k] = {"est": float(est), "se": float(se), "lo": float(lo), "hi": float(hi)}
+        pooled[k] = {"est": float(est), "se": float(se), "lo": float(lo), "hi": float(hi),
+                     "n_sets": len(pairs), "m": m_total}
     return pooled
 
 
@@ -420,7 +429,9 @@ def pooled_table(pooled, prefix):
         rows[f"NPV {int(NPV_TARGET * 100)}%"] = {
             k: ("not reached" if np.isnan(pooled[f'{prefix}npv_{k}']['est']) else
                 f"{pooled[f'{prefix}npv_{k}']['est']:.3f} "
-                f"[{pooled[f'{prefix}npv_{k}']['lo']:.3f}, {pooled[f'{prefix}npv_{k}']['hi']:.3f}]")
+                f"[{pooled[f'{prefix}npv_{k}']['lo']:.3f}, {pooled[f'{prefix}npv_{k}']['hi']:.3f}]"
+                + (f" ({pooled[f'{prefix}npv_{k}']['n_sets']}/{pooled[f'{prefix}npv_{k}']['m']} sets)"
+                   if pooled[f'{prefix}npv_{k}']['n_sets'] < pooled[f'{prefix}npv_{k}']['m'] else ""))
             for k in METRIC_KEYS}
     return pd.DataFrame(rows).T
 
