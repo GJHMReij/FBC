@@ -13,10 +13,11 @@ INPUT_CSV = r"C:\Users\Max.Reijers\Desktop\CohortMLgeslacht.csv"
 OUTCOME_CORRECTION = r"C:\Users\Max.Reijers\Desktop\df_met_script8000.xlsx"
 QUICK = True
 MODEL = 1
+SCRIPT = "univariable_auc.py"   # or "try_models.py"
 OUT_DIR = FOLDER + "\\results_temporal_outcome_imp"
 
 subprocess.run(["git", "pull"], cwd=FOLDER)
-cmd = [sys.executable, "-u", "try_models.py", "--models", str(MODEL),
+cmd = [sys.executable, "-u", SCRIPT, "--models", str(MODEL),
        "--input-csv", INPUT_CSV, "--outcome-correction", OUTCOME_CORRECTION,
        "--outcome-in-train-imputation", "--tuning-sets", "3", "--out-dir", OUT_DIR]
 if QUICK:
