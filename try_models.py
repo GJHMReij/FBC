@@ -31,6 +31,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 import pe_pipeline as pp
+from simple_report import write_report
 from pe_model1_cbc_rf import Heartbeat
 from pe_model2_cbc_diff_rf import D_DIMER_VALUE_COL, HOSPITAL_COL  # noqa: F401
 
@@ -45,6 +46,46 @@ BASELINE_PARAMS = {
 RF_REG_GRID = {"n_estimators": [500], "max_depth": [3, 4, 5, 7],
                "min_samples_leaf": [50, 100, 200, 300, 500],
                "min_samples_split": [50], "max_features": [0.05, 0.1, 0.2]}
+
+
+DESCRIPTIONS = [
+    ("rf_current", "Random forest with the hyperparameters found by the main run (reference)."),
+    ("rf_regularised", "Random forest, new grid: shallower trees, larger leaves, fewer variables per split."),
+    ("elastic_net", "Logistic regression, elastic-net penalty (mix of LASSO and ridge), standardised variables."),
+    ("lasso", "Logistic regression, L1 (LASSO) penalty only: shrinks weak variables to zero."),
+    ("xgboost", "Gradient-boosted trees (XGBoost; HistGradientBoosting if xgboost is not installed)."),
+    ("rf_on_lasso", "LASSO selects variables within each training set, then the current random forest on those variables."),
+]
+
+
+def save_outputs(rows, model_no, out_dir, n_train, n_test, n_feat, quick):
+    df_rows = pd.DataFrame(rows)
+    df_rows.to_csv(out_dir / f"try_models_m{model_no}.csv", index=False)
+    cols = ["Model", "Variables", "CV-AUC (tuning)", "Training AUC", "Test AUC, mean over sets (min-max)",
+            "Test AUC, ensemble (95% CI)", "Hyperparameters"]
+    body = []
+    for r in rows:
+        cv = "-" if pd.isna(r["cv_auc_tuning"]) else f"{r['cv_auc_tuning']:.3f}"
+        body.append([r["model"], f"{r['n_features']:.0f}", cv, f"{r['train_auc_mean']:.3f}",
+                     f"{r['test_auc_mean_over_sets']:.3f} ({r['test_auc_min']:.3f}-{r['test_auc_max']:.3f})",
+                     f"{r['test_auc_ensemble']:.3f} ({r['ensemble_ci_lo']:.3f}-{r['ensemble_ci_hi']:.3f})",
+                     r["params"]])
+    paras = [
+        f"Model {model_no}: comparison of machine-learning techniques on the same temporal 80/20 split and the "
+        f"same cached MICE sets as the main analysis. Training {n_train} scans, hold-out test {n_test} scans, "
+        f"{n_feat} candidate variables." + (" QUICK (smoke-test) mode: numbers are not final." if quick else ""),
+        "Hyperparameters were tuned with 5-fold patient-grouped cross-validation on AUC, on the first 3 imputed "
+        "training sets. Each candidate was then fitted once per imputed training set and evaluated on the matching "
+        "imputed test set. The ensemble AUC uses the mean predicted probability over the imputation sets, with a "
+        "patient-level bootstrap 95% CI. Results are not Rubin-pooled.",
+        "Reading guide: CV-AUC is the selection criterion (training data only); the test AUC is for information, "
+        "do not choose a model on it. A large gap between training and test AUC means overfitting.",
+    ]
+    sections = [("Overview of the candidates", cols, body, ""),
+                ("What each candidate is", ["Model", "Description"],
+                 [[n, d] for n, d in DESCRIPTIONS if any(r["model"].startswith(n) for r in rows)], "")]
+    return write_report(out_dir / f"try_models_m{model_no}_report", f"Model {model_no}: other ML techniques - overview",
+                        paras, sections)
 
 
 def make_xgb_or_hgb(seed):
@@ -64,7 +105,7 @@ def make_xgb_or_hgb(seed):
 
 def lr_pipe(penalty, seed):
     return make_pipeline(StandardScaler(),
-                         LogisticRegression(penalty=penalty, solver="saga", max_iter=3000,
+                         LogisticRegression(penalty=penalty, solver="saga", max_iter=1000, tol=1e-3,
                                             random_state=seed, **({"l1_ratio": 0.5} if penalty == "elasticnet" else {})))
 
 
@@ -139,18 +180,25 @@ def main():
     rows = []
     all_feats = lambda m: feats
     nj = args.n_jobs
+    n_tr, n_te = int(train_mask.sum()), int(test_mask.sum())
+
+    def checkpoint():
+        p = save_outputs(rows, model_no, args.out_dir, n_tr, n_te, len(feats), args.quick)
+        print(f"  (report updated: {p})", flush=True)
 
     print("\nCandidates:")
     # 1. current RF (no tuning: hyperparameters of the main run)
     base = {**BASELINE_PARAMS[model_no], "n_estimators": 500}
     rf = lambda p, m: RandomForestClassifier(**p, random_state=args.seed + m, n_jobs=nj)
     rows.append(evaluate("rf_current", rf, base, np.nan, train_sets, test_sets, all_feats, y_train, y_test, g_test, rng, nb))
+    checkpoint()
 
     # 2. regularised RF
     with Heartbeat("rf_regularised grid"):
         best, cva = tune(RandomForestClassifier(random_state=args.seed, n_jobs=1),
                          RF_REG_GRID, train_sets, feats, y_train, g_train, n_tune, cv, nj)
     rows.append(evaluate("rf_regularised", rf, best, cva, train_sets, test_sets, all_feats, y_train, y_test, g_test, rng, nb))
+    checkpoint()
 
     # 3. elastic net and 4. LASSO (standardised, saga)
     en_grid = {"logisticregression__C": [0.001, 0.003, 0.01, 0.03, 0.1, 0.3],
@@ -161,6 +209,7 @@ def main():
     def build_en(p, m):
         return lr_pipe("elasticnet", args.seed).set_params(**p)
     rows.append(evaluate("elastic_net", build_en, best_en, cva, train_sets, test_sets, all_feats, y_train, y_test, g_test, rng, nb))
+    checkpoint()
 
     la_grid = {"logisticregression__C": [0.001, 0.003, 0.01, 0.03, 0.1, 0.3]}
     with Heartbeat("lasso grid"):
@@ -169,6 +218,7 @@ def main():
     def build_la(p, m):
         return lr_pipe("l1", args.seed).set_params(**p)
     rows.append(evaluate("lasso", build_la, best_la, cva, train_sets, test_sets, all_feats, y_train, y_test, g_test, rng, nb))
+    checkpoint()
 
     # 5. XGBoost
     name, est, grid = make_xgb_or_hgb(args.seed)
@@ -176,6 +226,7 @@ def main():
         best_gb, cva = tune(est, grid, train_sets, feats, y_train, g_train, n_tune, cv, nj)
     rows.append(evaluate(name.split(" ")[0], lambda p, m: est.__class__(**{**est.get_params(), **p}),
                          best_gb, cva, train_sets, test_sets, all_feats, y_train, y_test, g_test, rng, nb))
+    checkpoint()
 
     # 6. LASSO selects variables (within each training set), RF on the selected variables
     selected = {}
@@ -189,11 +240,9 @@ def main():
             selected[m] = keep if len(keep) >= 3 else feats
         return selected[m]
     rows.append(evaluate("rf_on_lasso", rf, base, np.nan, train_sets, test_sets, sel_feats, y_train, y_test, g_test, rng, nb))
+    checkpoint()
 
-    out = pd.DataFrame(rows)
-    path = args.out_dir / f"try_models_m{model_no}.csv"
-    out.to_csv(path, index=False)
-    print(f"\nWritten: {path}   ({(time.time() - t0) / 60:.1f} min)")
+    print(f"\nDone in {(time.time() - t0) / 60:.1f} min. Report: try_models_m{model_no}_report.docx in {args.out_dir}")
     print("Paste the table above here (aggregates only).")
 
 

@@ -18,6 +18,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 import pe_pipeline as pp
+from simple_report import write_report
 from pe_model1_cbc_rf import AGE_COL, CREATININE_COL
 from pe_model2_cbc_diff_rf import D_DIMER_VALUE_COL
 
@@ -89,7 +90,22 @@ def main():
         print(f"\n--- reference ({pop_name}) ---")
         print(ref[cols].to_string(index=False))
         print(f"\nVariables with test AUC (in training direction) >= 0.55: {int((sub['auc_test'] >= 0.55).sum())} of {len(sub)}")
-    print(f"\nWritten: {path}\nPaste the top lists here (aggregates only).")
+    fmt = lambda r: [r.feature, r.group, r.direction, f"{r.pct_missing_train:.1f}", f"{r.auc_train:.3f}",
+                     "-" if pd.isna(r.auc_test) else f"{r.auc_test:.3f} ({r.test_ci_lo:.3f}-{r.test_ci_hi:.3f})"]
+    head = ["Variable", "Group", "Direction (set on training)", "% missing (train)", "AUC training", "AUC test (95% CI)"]
+    sections = []
+    for pop_name, sub in out.groupby("population"):
+        sections.append((f"{pop_name}: top 20 by training AUC", head, [fmt(r) for r in sub.head(20).itertuples()], ""))
+        sections.append((f"{pop_name}: reference variables", head,
+                         [fmt(r) for r in sub[sub["group"] == "ref"].itertuples()],
+                         f"Variables with test AUC (training direction) >= 0.55: {int((sub['auc_test'] >= 0.55).sum())} of {len(sub)}."))
+    paras = ["Univariable AUC of every CBC and DIFF variable for PE, on raw (not imputed) values, same temporal 80/20 split "
+             "as the main analysis. The direction (higher or lower = more PE) is fixed on the training set and applied "
+             "unchanged to the test set; a test AUC below 0.5 means the training signal did not hold. Sorted by training "
+             "AUC. With ~140 variables a few look good by chance: read training and test together.",
+             f"Test AUC CI: patient-level bootstrap ({N_BOOT} draws). Full list: univariable_auc.csv."]
+    rp = write_report(args.out_dir / "univariable_auc_report", "Univariable AUC of CBC and DIFF variables", paras, sections)
+    print(f"\nWritten: {path}\nReport: {rp}\nPaste the top lists here (aggregates only).")
 
 
 if __name__ == "__main__":

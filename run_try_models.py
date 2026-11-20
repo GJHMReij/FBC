@@ -22,7 +22,12 @@ cmd = [sys.executable, "-u", SCRIPT, "--models", str(MODEL),
        "--outcome-in-train-imputation", "--tuning-sets", "3", "--out-dir", OUT_DIR]
 if QUICK:
     cmd.append("--quick")
+from datetime import datetime
+LOG = f"{FOLDER}\\{SCRIPT[:-3]}_log_{datetime.now():%Y%m%d_%H%M%S}.txt"
+log = open(LOG, "a", encoding="utf-8")
 p = subprocess.Popen(cmd, cwd=FOLDER, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 for line in p.stdout:
     print(line, end="")
+    log.write(line)
+    log.flush()
 p.wait()
